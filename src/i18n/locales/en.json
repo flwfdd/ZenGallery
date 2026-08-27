@@ -27,7 +27,7 @@
         "dropzone": "Click to select files or drag and drop here",
         "dropFiles": "Drop files to upload",
         "addMoreFiles": "Click to add more files",
-        "dropzoneSubtitle": "Supports multiple files, single file max 100MB",
+        "dropzoneSubtitle": "Supports multiple files, single file max {maxSize}",
         "startUpload": "Start Upload",
         "uploading": "Uploading",
         "uploadProgress": "Upload Progress",
@@ -36,6 +36,7 @@
         "success": "Upload successful",
         "error": "Upload failed",
         "waiting": "Waiting",
+        "hashing": "Calculating file fingerprint",
         "completed": "Completed",
         "duplicate": "Duplicate skipped",
         "duplicateSkipped": "File already exists, skipped",
@@ -130,6 +131,7 @@
     "auth": {
         "enterSecretKey": "Please enter the secret key:",
         "invalidSecretKey": "Invalid secret key",
-        "unauthorized": "Unauthorized access"
+        "unauthorized": "Unauthorized access",
+        "notConfigured": "SECRET_KEY has not been configured on the server"
     }
 }

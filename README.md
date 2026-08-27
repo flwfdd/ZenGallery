@@ -18,7 +18,7 @@
 - **媒体预览**：支持图片、视频、音频预览
 - **智能去重**：智能哈希检测，避免重复存储
 - **一键分享**：一键生成链接，轻松分享给他人
-- **自定义访问密钥**：支持自定义访问密钥，保护隐私
+- **管理访问密钥**：文件列表、上传、编辑和删除需要密钥，分享链接保持公开
 
 ### 🎯 精心设计的用户体验
 - **极简界面**：从手绘图纸中汲取灵感
@@ -41,7 +41,7 @@
 | 🔗 **链接分享** | 生成永久访问链接 | ✅ |
 | 🌍 **国际化** | 中英双语界面切换 | ✅ |
 | 🌙 **主题模式** | 浅色/深色/跟随系统 | ✅ |
-| 🔒 **安全保护** | 自定义访问密钥 | ✅ |
+| 🔒 **安全保护** | 管理接口密钥认证，公开链接独立分享 | ✅ |
 
 ## 🚀 快速开始
 
@@ -66,6 +66,9 @@ pnpm install
 # 配置 Cloudflare
 # 编辑 wrangler.jsonc，设置你的域名和资源名称
 
+# 设置管理密钥（不会写入仓库）
+pnpm wrangler secret put SECRET_KEY
+
 # 构建
 pnpm build
 
@@ -79,12 +82,35 @@ pnpm deploy
 # 安装依赖
 pnpm install
 
-# 执行数据库迁移
-pnpm wrangler d1 migrations apply DB
+# 配置本地管理密钥
+cp .dev.vars.example .dev.vars
+# 然后修改 .dev.vars 中的 SECRET_KEY
+
+# 执行本地数据库迁移
+pnpm wrangler d1 migrations apply DB --local
 
 # 启动开发服务器
 pnpm dev
 pnpm preview
+```
+
+## 🔐 权限边界
+
+- `/api/files` 及上传、分片上传、编辑、删除接口需要通过 `SECRET_KEY` 登录。
+- `/files/*` 与 `/r2/*` 是公开分享链接，不携带管理密钥也可以访问。
+- 未配置 `SECRET_KEY` 时管理接口会返回 `503`，不会退化为匿名管理模式。
+- 登录成功后服务端设置 `HttpOnly`、`SameSite=Strict` Cookie；前端不会保存或读取管理密钥。
+
+线上密钥使用 `wrangler secret put SECRET_KEY` 设置，本地密钥放在不会提交到 Git 的 `.dev.vars` 中。
+
+## ✅ 质量检查
+
+```bash
+pnpm typecheck  # Vue + TypeScript 类型检查
+pnpm test       # 单元测试与 API 故障恢复测试
+pnpm lint       # ESLint
+pnpm build      # 前端与 Worker 生产构建
+pnpm check      # 依次执行以上全部检查
 ```
 
 ## 🎨 界面预览
@@ -109,6 +135,8 @@ Hono + Cloudflare Workers + R2 + D1
 - **Cloudflare Workers** - 全球分布式计算平台
 - **Cloudflare R2** - 对象存储，兼容 S3 API
 - **Cloudflare D1** - 边缘数据库，基于 SQLite
+
+上传文件使用分块 SHA-256 计算内容指纹，浏览器不会把大文件一次性读入内存。单文件上限为 10GB，超过 50MB 时自动使用 R2 分片上传。上传和删除流程均可安全重试：R2 与 D1 发生部分失败时，后续请求会自动补全或清理状态。
 
 ---
 

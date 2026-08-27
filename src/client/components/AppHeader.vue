@@ -18,7 +18,7 @@
           <!-- Github -->
           <a href="https://github.com/flwfdd/ZenGallery" target="_blank"
             class="w-10 h-10 bg-slate-50 dark:bg-slate-700 border-2 border-slate-200 dark:border-slate-600 rounded-lg shadow-[2px_2px_0px_0px_rgba(148,163,184,0.2)] transition-all duration-150 flex items-center justify-center hover:scale-110 active:scale-95 cursor-pointer text-slate-500 dark:text-slate-400 hover:bg-cyan-100 dark:hover:bg-cyan-600 hover:text-slate-700 dark:hover:text-slate-300">
-            <Github class="w-4 h-4" />
+            <GitFork class="w-4 h-4" />
           </a>
 
           <!-- 语言切换器 -->
@@ -52,7 +52,7 @@
 </template>
 
 <script setup lang="ts">
-import { Github, Moon, Sun, SunMoon } from 'lucide-vue-next';
+import { GitFork, Moon, Sun, SunMoon } from '@lucide/vue';
 import { useI18n } from 'vue-i18n';
 import LanguageSwitcher from './LanguageSwitcher.vue';
 

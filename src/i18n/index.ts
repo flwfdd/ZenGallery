@@ -2,10 +2,12 @@ import { createI18n } from 'vue-i18n'
 import en from './locales/en.json'
 import zh from './locales/zh.json'
 
+type Locale = 'zh' | 'en'
+
 // 从localStorage获取用户偏好语言，默认为中文
-const getStoredLanguage = (): string => {
+const getStoredLanguage = (): Locale => {
     const stored = localStorage.getItem('preferred-language')
-    if (stored && ['zh', 'en'].includes(stored)) {
+    if (stored === 'zh' || stored === 'en') {
         return stored
     }
     // 检查浏览器语言偏好
@@ -29,12 +31,12 @@ export const i18n = createI18n({
 export const supportedLocales = [
     { code: 'zh', name: '中文', nativeName: '中文' },
     { code: 'en', name: 'English', nativeName: 'English' }
-]
+] as const
 
 // 切换语言的工具函数
 export const switchLanguage = (locale: string) => {
-    if (supportedLocales.some(l => l.code === locale)) {
-        i18n.global.locale.value = locale as any
+    if (locale === 'zh' || locale === 'en') {
+        i18n.global.locale.value = locale
         localStorage.setItem('preferred-language', locale)
         document.documentElement.lang = locale
     }
@@ -43,4 +45,4 @@ export const switchLanguage = (locale: string) => {
 // 获取当前语言
 export const getCurrentLanguage = () => {
     return i18n.global.locale.value
-} 
+}

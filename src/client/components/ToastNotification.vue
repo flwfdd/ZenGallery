@@ -22,7 +22,7 @@
 
 <script setup lang="ts">
 import { TransitionChild, TransitionRoot } from '@headlessui/vue';
-import { CheckCircle } from 'lucide-vue-next';
+import { CheckCircle } from '@lucide/vue';
 import { ref, watch } from 'vue';
 
 const props = defineProps<{

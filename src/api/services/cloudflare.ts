@@ -1,5 +1,16 @@
 import type { D1Database, R2Bucket } from '@cloudflare/workers-types';
-import type { DatabaseService, FileMetadata, ImageCompressionLevel, ImageProcessingService, ListFilesOptions, StorageService } from '../../common/services';
+import type {
+    DatabaseService,
+    FileMetadata,
+    ImageCompressionLevel,
+    ImageProcessingService,
+    ListFilesOptions,
+    StorageObject,
+    StorageObjectMetadata,
+    StorageRange,
+    StorageService,
+    StorageWriteMetadata,
+} from '../../common/services';
 
 export class CloudflareR2Service implements StorageService {
     private bucket: R2Bucket;
@@ -20,21 +31,24 @@ export class CloudflareR2Service implements StorageService {
         return fullKey.replace(/\/\/+/g, '/'); // Normalize multiple slashes
     }
 
-    async put(key: string, data: ReadableStream | ArrayBuffer | Blob, metadata?: Record<string, string>): Promise<{ etag?: string; size?: number }> {
+    async put(key: string, data: ReadableStream | ArrayBuffer | Blob, metadata?: StorageWriteMetadata): Promise<{ etag?: string }> {
         const httpMetadata: Record<string, string> = {};
         if (metadata?.contentType) {
             httpMetadata.contentType = metadata.contentType;
         }
 
-        const result = await this.bucket.put(this.getFullKey(key), data as any, { httpMetadata });
+        const result = await this.bucket.put(this.getFullKey(key), data as Parameters<R2Bucket['put']>[1], {
+            httpMetadata,
+            customMetadata: metadata?.customMetadata,
+        });
 
         return {
             etag: result.etag
         };
     }
 
-    async get(key: string): Promise<{ body: ReadableStream<Uint8Array> | ArrayBuffer | null; metadata?: Record<string, any> } | null> {
-        const object = await this.bucket.get(this.getFullKey(key));
+    async get(key: string, range?: StorageRange): Promise<StorageObject | null> {
+        const object = await this.bucket.get(this.getFullKey(key), range ? { range } : undefined);
         if (object === null) {
             return null;
         }
@@ -51,9 +65,17 @@ export class CloudflareR2Service implements StorageService {
         };
     }
 
-    async head(key: string): Promise<Record<string, any> | null> {
+    async head(key: string): Promise<StorageObjectMetadata | null> {
         const object = await this.bucket.head(this.getFullKey(key));
-        return object;
+        if (!object) {
+            return null;
+        }
+        return {
+            contentType: object.httpMetadata?.contentType,
+            contentLength: object.size,
+            etag: object.httpEtag,
+            customMetadata: object.customMetadata,
+        };
     }
 
     async delete(key: string): Promise<void> {
@@ -70,8 +92,14 @@ export class CloudflareD1Service implements DatabaseService {
 
     async saveFile(record: FileMetadata): Promise<void> {
         const stmt = this.db.prepare(
-            `INSERT INTO files (filename, title, description, mime_type, size, uploaded_at) VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT (filename) DO UPDATE SET title = ?, description = ?`
+            `INSERT INTO files (filename, title, description, mime_type, size, uploaded_at)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT (filename) DO UPDATE SET
+                title = excluded.title,
+                description = excluded.description,
+                mime_type = excluded.mime_type,
+                size = excluded.size,
+                uploaded_at = excluded.uploaded_at`
         );
         await stmt.bind(
             record.filename,
@@ -79,9 +107,7 @@ export class CloudflareD1Service implements DatabaseService {
             record.description || null,
             record.mime_type,
             record.size,
-            record.uploaded_at,
-            record.title || null,
-            record.description || null
+            record.uploaded_at
         ).run();
     }
 
@@ -98,24 +124,8 @@ export class CloudflareD1Service implements DatabaseService {
 
     async listFiles(options?: ListFilesOptions): Promise<FileMetadata[]> {
         let query = 'SELECT * FROM files';
-        const params: any[] = [];
-        const conditions: string[] = [];
-
-        // Add WHERE conditions
-        if (options?.mime_type) {
-            conditions.push('mime_type LIKE ?');
-            params.push(`%${options.mime_type}%`);
-        }
-
-        if (options?.search) {
-            conditions.push('(title LIKE ? OR description LIKE ?)');
-            const searchPattern = `%${options.search}%`;
-            params.push(searchPattern, searchPattern);
-        }
-
-        if (conditions.length > 0) {
-            query += ' WHERE ' + conditions.join(' AND ');
-        }
+        const { clause, params } = this.buildFilters(options);
+        query += clause;
 
         // Add ORDER BY
         if (options?.sort_by) {
@@ -142,9 +152,42 @@ export class CloudflareD1Service implements DatabaseService {
         const result = await stmt.bind(...params).all<FileMetadata>();
         return result.results || [];
     }
+
+    async countFiles(options?: ListFilesOptions): Promise<number> {
+        const { clause, params } = this.buildFilters(options);
+        const result = await this.db
+            .prepare(`SELECT COUNT(*) AS count FROM files${clause}`)
+            .bind(...params)
+            .first<{ count: number }>();
+        return result?.count ?? 0;
+    }
+
+    private buildFilters(options?: ListFilesOptions): { clause: string; params: unknown[] } {
+        const params: unknown[] = [];
+        const conditions: string[] = [];
+
+        if (options?.mime_type) {
+            const mimeTypes = options.mime_type.split(',').map((value) => value.trim()).filter(Boolean);
+            if (mimeTypes.length > 0) {
+                conditions.push(`(${mimeTypes.map(() => 'mime_type LIKE ?').join(' OR ')})`);
+                params.push(...mimeTypes.map((mimeType) => `${mimeType}%`));
+            }
+        }
+
+        if (options?.search) {
+            conditions.push('(filename LIKE ? OR title LIKE ? OR description LIKE ?)');
+            const searchPattern = `%${options.search}%`;
+            params.push(searchPattern, searchPattern, searchPattern);
+        }
+
+        return {
+            clause: conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '',
+            params,
+        };
+    }
 }
 
-export class CloudFlareImageService implements ImageProcessingService {
+export class CloudflareImageService implements ImageProcessingService {
     private imagesBinding: ImagesBinding;
 
     constructor(imagesBinding: ImagesBinding) {
@@ -172,13 +215,9 @@ export class CloudFlareImageService implements ImageProcessingService {
             ).response();
 
             const transformedImageData = await transformedImageResponse.arrayBuffer();
-            const outputFormat = transformedImageResponse.headers.get('content-type') || transformParams.output.format;
-
-            console.log(`Successfully compressed image with CloudFlare Images: level=${level}, originalSize=${imageData.byteLength}, compressedSize=${transformedImageData.byteLength}, outputFormat=${outputFormat}`);
-
             return {
                 data: transformedImageData,
-                mimeType: outputFormat
+                mimeType: transformedImageResponse.headers.get('content-type') || transformParams.output.format,
             };
 
         } catch (error) {
@@ -227,4 +266,4 @@ export class CloudFlareImageService implements ImageProcessingService {
                 };
         }
     }
-} 
+}

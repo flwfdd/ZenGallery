@@ -2,10 +2,9 @@ import { cloudflare } from '@cloudflare/vite-plugin'
 import honoBuild from '@hono/vite-build/cloudflare-workers'
 import tailwindcss from '@tailwindcss/vite'
 import vue from '@vitejs/plugin-vue'
-import copy from 'rollup-plugin-copy'
 import { defineConfig } from 'vite'
 
-export default defineConfig(({ command, mode, isSsrBuild }) => {
+export default defineConfig(({ command, mode }) => {
   if (command === 'serve') {
     return {
       plugins: [tailwindcss(), vue(), cloudflare()]
@@ -16,13 +15,7 @@ export default defineConfig(({ command, mode, isSsrBuild }) => {
     return {
       plugins: [
         tailwindcss(),
-        vue(),
-        copy({
-          targets: [
-            { src: 'public/favicon.ico', dest: 'dist' }
-          ],
-          hook: 'writeBundle'
-        })
+        vue()
       ],
       build: {
         rollupOptions: {
@@ -36,23 +29,8 @@ export default defineConfig(({ command, mode, isSsrBuild }) => {
             assetFileNames: 'assets/style.css'
           }
         },
-        emptyOutDir: false,
-        copyPublicDir: false
+        emptyOutDir: false
       }
-    }
-  }
-
-  if (isSsrBuild) {
-    return {
-      publicDir: false,
-      plugins: [
-        honoBuild({
-          entry: 'src/api/index.ts',
-          outputDir: 'dist-server',
-          entryContentAfterHooks: [],
-          entryContentDefaultExportHook: () => ''
-        })
-      ]
     }
   }
 
@@ -60,7 +38,7 @@ export default defineConfig(({ command, mode, isSsrBuild }) => {
     publicDir: false,
     plugins: [
       honoBuild({
-        entry: 'src/index.ts',
+        entry: 'src/api/index.ts',
         outputDir: 'dist-server',
         entryContentAfterHooks: [],
         entryContentDefaultExportHook: () => ''

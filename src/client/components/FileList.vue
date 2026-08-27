@@ -42,7 +42,7 @@
           <div>
             <label class="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2 sm:mb-3">{{
               t('fileList.fileType') }}</label>
-            <Listbox v-model="selectedMimeType" @update:modelValue="loadFiles">
+            <Listbox v-model="selectedMimeType">
               <div class="relative">
                 <ListboxButton
                   class="relative w-full cursor-pointer rounded-xl bg-white dark:bg-slate-700 py-3 pl-4 pr-10 text-left border-2 border-slate-200 dark:border-slate-600 focus:border-cyan-300 dark:focus:border-cyan-500 focus:outline-none transition-all duration-150 hover:border-slate-300 dark:hover:border-slate-500 focus:scale-[1.02] shadow-[1px_1px_0px_0px_rgba(148,163,184,0.1)]">
@@ -83,7 +83,7 @@
           <div>
             <label class="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2 sm:mb-3">{{
               t('fileList.sortBy') }}</label>
-            <Listbox v-model="sortBy" @update:modelValue="loadFiles">
+            <Listbox v-model="sortBy">
               <div class="relative">
                 <ListboxButton
                   class="relative w-full cursor-pointer rounded-xl bg-white dark:bg-slate-700 py-3 pl-4 pr-10 text-left border-2 border-slate-200 dark:border-slate-600 focus:border-cyan-300 dark:focus:border-cyan-500 focus:outline-none transition-all duration-150 hover:border-slate-300 dark:hover:border-slate-500 focus:scale-[1.02] shadow-[1px_1px_0px_0px_rgba(148,163,184,0.1)]">
@@ -123,7 +123,7 @@
           <div>
             <label class="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2 sm:mb-3">{{
               t('fileList.sortOrder') }}</label>
-            <Listbox v-model="sortOrder" @update:modelValue="loadFiles">
+            <Listbox v-model="sortOrder">
               <div class="relative">
                 <ListboxButton
                   class="relative w-full cursor-pointer rounded-xl bg-white dark:bg-slate-700 py-3 pl-4 pr-10 text-left border-2 border-slate-200 dark:border-slate-600 focus:border-cyan-300 dark:focus:border-cyan-500 focus:outline-none transition-all duration-150 hover:border-slate-300 dark:hover:border-slate-500 focus:scale-[1.02] shadow-[1px_1px_0px_0px_rgba(148,163,184,0.1)]">
@@ -184,7 +184,7 @@
         </div>
 
         <div v-else class="space-y-3 sm:space-y-4">
-          <div v-for="(file, index) in fileList" :key="file.filename"
+          <div v-for="file in fileList" :key="file.filename"
             class="bg-slate-50 dark:bg-slate-700 border-2 border-slate-200 dark:border-slate-600 rounded-2xl p-4 sm:p-6 hover:bg-slate-100 dark:hover:bg-slate-600 transition-all duration-150 hover:scale-[1.01] group shadow-[2px_2px_0px_0px_rgba(148,163,184,0.15)]">
             <div class="flex flex-col gap-3 sm:gap-0 sm:flex-row sm:items-center sm:gap-6">
               <!-- 移动端：缩略图和信息在一行 -->
@@ -205,8 +205,8 @@
                     class="font-bold text-slate-800 dark:text-slate-200 truncate text-base sm:text-lg group-hover:text-cyan-700 dark:group-hover:text-cyan-300 transition-colors duration-200">
                     {{ file.title || file.filename }}
                   </h3>
-                  <p class="text-slate-500 dark:text-slate-500 truncate text-xs sm:text-sm">
-                    {{ file.description || '&nbsp;' }}
+                  <p class="min-h-4 text-slate-500 dark:text-slate-500 truncate text-xs sm:text-sm">
+                    {{ file.description }}
                   </p>
                   <p class="text-slate-600 dark:text-slate-400 text-xs sm:text-sm">
                     {{ formatFileSize(file.size) }} • {{ formatDate(file.uploaded_at) }}
@@ -238,16 +238,16 @@
         <div v-if="fileList.length > 0"
           class="mt-6 sm:mt-8 flex flex-col sm:flex-row items-center justify-between gap-4 pt-6 sm:pt-8 border-t-2 border-dashed border-slate-200 dark:border-slate-600">
           <div class="text-slate-700 dark:text-slate-300 font-medium text-sm sm:text-base text-center sm:text-left">
-            {{ t('fileList.showing') }} {{ currentOffset + 1 }}-{{ Math.min(currentOffset + currentLimit,
-              totalFiles || fileList.length) }}
-            {{ totalFiles ? ` ${t('common.all')} ${totalFiles} ${t('fileList.files')}` : '' }}
+            {{ t('fileList.showing') }} {{ currentOffset + 1 }}-{{ currentOffset + fileList.length }}
+            {{ totalFiles !== null ? ` ${t('common.all')} ${totalFiles} ${t('fileList.files')}` : '' }}
           </div>
           <div class="flex gap-3">
             <button @click="previousPage" :disabled="currentOffset === 0"
               class="px-3 sm:px-4 py-2 bg-slate-200 dark:bg-slate-600 hover:bg-slate-300 dark:hover:bg-slate-500 disabled:bg-slate-100 dark:disabled:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold rounded-xl border-2 border-slate-300 dark:border-slate-600 disabled:border-slate-200 dark:disabled:border-slate-700 transition-all duration-150 hover:scale-105 active:scale-95 disabled:hover:scale-100 cursor-pointer disabled:cursor-not-allowed shadow-[2px_2px_0px_0px_rgba(148,163,184,0.2)] text-sm sm:text-base">
               {{ t('fileList.previous') }}
             </button>
-            <button @click="nextPage" :disabled="fileList.length < currentLimit"
+            <button @click="nextPage"
+              :disabled="totalFiles !== null ? currentOffset + fileList.length >= totalFiles : fileList.length < currentLimit"
               class="px-3 sm:px-4 py-2 bg-slate-200 dark:bg-slate-600 hover:bg-slate-300 dark:hover:bg-slate-500 disabled:bg-slate-100 dark:disabled:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold rounded-xl border-2 border-slate-300 dark:border-slate-600 disabled:border-slate-200 dark:disabled:border-slate-700 transition-all duration-150 hover:scale-105 active:scale-95 disabled:hover:scale-100 cursor-pointer disabled:cursor-not-allowed shadow-[2px_2px_0px_0px_rgba(148,163,184,0.2)] text-sm sm:text-base">
               {{ t('fileList.next') }}
             </button>
@@ -280,8 +280,8 @@ import {
   RotateCcw,
   Search,
   Trash2
-} from 'lucide-vue-next';
-import { computed, onMounted, ref } from 'vue';
+} from '@lucide/vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppType } from '../../api/index';
 import type { FileMetadata, ListFilesOptions } from '../../common/services';
@@ -291,7 +291,7 @@ import SecretKeyModal from './SecretKeyModal.vue';
 const { t } = useI18n();
 const client = hc<AppType>('/');
 
-const emit = defineEmits<{
+defineEmits<{
   openDetails: [file: FileMetadata];
   openEdit: [file: FileMetadata];
   confirmDelete: [filename: string];
@@ -307,6 +307,12 @@ const sortOrder = ref<ListFilesOptions['sort']>('desc');
 const currentOffset = ref(0);
 const currentLimit = ref(20);
 const totalFiles = ref<number | null>(null);
+let latestRequestId = 0;
+
+interface FilesResponse {
+  files: FileMetadata[];
+  count: number;
+}
 
 // 权限相关状态
 const showSecretKeyModal = ref(false);
@@ -320,8 +326,14 @@ const fileTypeOptions = computed(() => [
   { value: 'audio/', label: t('fileList.audioFiles') },
   { value: 'text/', label: t('fileList.textFiles') },
   { value: 'application/pdf', label: t('fileList.pdfFiles') },
-  { value: 'application/zip', label: t('fileList.archiveFiles') },
-  { value: 'application/vnd.openxmlformats-officedocument', label: t('fileList.officeFiles') }
+  {
+    value: 'application/zip,application/x-rar-compressed,application/vnd.rar,application/x-7z-compressed,application/gzip,application/x-tar',
+    label: t('fileList.archiveFiles')
+  },
+  {
+    value: 'application/vnd.openxmlformats-officedocument,application/msword,application/vnd.ms-,application/vnd.oasis.opendocument',
+    label: t('fileList.officeFiles')
+  }
 ]);
 
 const sortByOptions = computed(() => [
@@ -336,6 +348,7 @@ const sortOrderOptions = computed(() => [
 
 // 加载文件列表
 const loadFiles = async () => {
+  const requestId = ++latestRequestId;
   isLoadingFiles.value = true;
   try {
     const options: Record<string, string> = {
@@ -346,7 +359,7 @@ const loadFiles = async () => {
     };
 
     if (selectedMimeType.value) {
-      options.mimeType = selectedMimeType.value;
+      options.mime_type = selectedMimeType.value;
     }
 
     if (searchQuery.value.trim()) {
@@ -361,74 +374,46 @@ const loadFiles = async () => {
       return;
     }
 
-    const data = await response.json();
-
     if (response.ok) {
-      fileList.value = (data as any).files || [];
-      totalFiles.value = (data as any).count || null;
+      const data = await response.json() as FilesResponse;
+      if (requestId !== latestRequestId) return;
+      fileList.value = data.files;
+      totalFiles.value = data.count;
     } else {
+      const data = await response.json();
       console.error('Failed to load files:', data);
+      if (requestId !== latestRequestId) return;
       fileList.value = [];
+      totalFiles.value = 0;
     }
   } catch (error) {
     console.error('Error loading files:', error);
+    if (requestId !== latestRequestId) return;
     fileList.value = [];
+    totalFiles.value = 0;
   } finally {
-    isLoadingFiles.value = false;
+    if (requestId === latestRequestId) {
+      isLoadingFiles.value = false;
+    }
   }
 };
 
 // 处理密钥确认
 const handleSecretKeyConfirm = async (secretKey: string) => {
-  // 设置cookie
-  setCookie('secret-key', secretKey);
-
-  // 关闭模态框
-  showSecretKeyModal.value = false;
-
-  // 重新加载文件列表以验证密钥
-  const tempLoadingState = isLoadingFiles.value;
-  isLoadingFiles.value = true;
-
   try {
-    const options: Record<string, string> = {
-      limit: currentLimit.value.toString(),
-      offset: currentOffset.value.toString(),
-      sort_by: sortBy.value || 'uploaded_at',
-      sort: sortOrder.value || 'desc',
-    };
-
-    if (selectedMimeType.value) {
-      options.mimeType = selectedMimeType.value;
-    }
-
-    if (searchQuery.value.trim()) {
-      options.search = searchQuery.value.trim();
-    }
-
-    const response = await client.api.files.$get({ query: options });
-
-    if (response.status === 401) {
-      // 密钥仍然无效，显示错误并重新打开模态框
-      showSecretKeyModal.value = true;
-      secretKeyModalRef.value?.showError(t('auth.invalidSecretKey'));
+    const response = await client.api.auth.login.$post({ json: { secret_key: secretKey } });
+    if (response.ok) {
+      showSecretKeyModal.value = false;
+      await loadFiles();
       return;
     }
 
-    const data = await response.json();
-
-    if (response.ok) {
-      fileList.value = (data as any).files || [];
-      totalFiles.value = (data as any).count || null;
-    } else {
-      console.error('Failed to load files:', data);
-      fileList.value = [];
-    }
+    secretKeyModalRef.value?.showError(
+      response.status === 503 ? t('auth.notConfigured') : t('auth.invalidSecretKey'),
+    );
   } catch (error) {
-    console.error('Error loading files:', error);
-    fileList.value = [];
-  } finally {
-    isLoadingFiles.value = tempLoadingState;
+    console.error('Error authenticating:', error);
+    secretKeyModalRef.value?.showError(t('errors.networkError'));
   }
 };
 
@@ -437,13 +422,6 @@ const handleSecretKeyCancel = () => {
   showSecretKeyModal.value = false;
   fileList.value = [];
   isLoadingFiles.value = false;
-};
-
-// Cookie工具函数
-const setCookie = (name: string, value: string, days: number = 30) => {
-  const expires = new Date();
-  expires.setTime(expires.getTime() + (days * 24 * 60 * 60 * 1000));
-  document.cookie = `${name}=${encodeURIComponent(value)};expires=${expires.toUTCString()};path=/;SameSite=Lax`;
 };
 
 // 分页
@@ -472,6 +450,13 @@ const debouncedSearch = () => {
     loadFiles();
   }, 500);
 };
+
+const resetPageAndLoad = () => {
+  currentOffset.value = 0;
+  loadFiles();
+};
+
+watch([selectedMimeType, sortBy, sortOrder], resetPageAndLoad);
 
 // 工具函数
 const formatFileSize = (bytes: number): string => {
@@ -505,11 +490,29 @@ defineExpose({
   },
   refreshAfterDelete: (filename: string) => {
     fileList.value = fileList.value.filter(f => f.filename !== filename);
-  }
+    if (totalFiles.value !== null) {
+      totalFiles.value = Math.max(0, totalFiles.value - 1);
+    }
+    if (fileList.value.length === 0 && currentOffset.value > 0) {
+      currentOffset.value = Math.max(0, currentOffset.value - currentLimit.value);
+      loadFiles();
+    }
+  },
+  reloadFromStart: () => {
+    currentOffset.value = 0;
+    loadFiles();
+  },
+  requestAuthentication: () => {
+    showSecretKeyModal.value = true;
+  },
 });
 
 // 初始化
 onMounted(() => {
   loadFiles();
+});
+
+onUnmounted(() => {
+  if (searchTimeout) clearTimeout(searchTimeout);
 });
 </script>

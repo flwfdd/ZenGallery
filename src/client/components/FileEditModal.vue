@@ -72,7 +72,7 @@ import {
   TransitionRoot
 } from '@headlessui/vue';
 import { hc } from 'hono/client';
-import { Loader2, Save, X } from 'lucide-vue-next';
+import { Loader2, Save, X } from '@lucide/vue';
 import { reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppType } from '../../api/index';
@@ -90,6 +90,7 @@ const emit = defineEmits<{
   close: [];
   updated: [file: FileMetadata];
   showToast: [message: string];
+  authenticationRequired: [];
 }>();
 
 // 编辑表单
@@ -119,24 +120,22 @@ const saveFileInfo = async () => {
         filename: props.file.filename
       },
       json: {
-        title: editForm.title || undefined,
-        description: editForm.description || undefined
+        title: editForm.title,
+        description: editForm.description
       }
     });
 
     if (response.ok) {
-      const updatedFile: FileMetadata = {
-        ...props.file,
-        title: editForm.title || undefined,
-        description: editForm.description || undefined
-      };
-
-      emit('updated', updatedFile);
+      const data = await response.json();
+      emit('updated', data.info);
       emit('showToast', t('fileList.updateSuccess'));
       emit('close');
     } else {
+      if (response.status === 401) {
+        emit('authenticationRequired');
+      }
       const errorData = await response.json();
-      emit('showToast', `${t('errors.loadFailed')}: ${(errorData as any).error || t('errors.serverError')}`);
+      emit('showToast', `${t('errors.loadFailed')}: ${'error' in errorData ? errorData.error : t('errors.serverError')}`);
     }
   } catch (error) {
     console.error('Error updating file info:', error);

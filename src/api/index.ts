@@ -1,16 +1,30 @@
 import type { D1Database, R2Bucket } from '@cloudflare/workers-types';
 import { zValidator } from '@hono/zod-validator';
-import type { Context } from 'hono';
+import type { Context, MiddlewareHandler } from 'hono';
 import { Hono } from 'hono';
-import { getCookie } from 'hono/cookie';
+import { getCookie, setCookie } from 'hono/cookie';
 import { validator } from 'hono/validator';
 import { z } from 'zod';
 
-import type { FileMetadata, ImageCompressionLevel, StorageService } from '../common/services';
+import { FILE_HASH_PATTERN, FILE_KEY_PATTERN, getFileKey, MAX_SINGLE_UPLOAD_SIZE, MAX_UPLOAD_SIZE, MULTIPART_CHUNK_SIZE } from '../common/files';
+import type { FileMetadata, ImageCompressionLevel, StorageObjectMetadata, StorageService } from '../common/services';
 import { ImageCompressionLevelSchema, ListFilesOptionsSchema } from '../common/services';
-import { CloudflareD1Service, CloudFlareImageService, CloudflareR2Service } from './services/cloudflare';
+import { parseRangeHeader } from './range';
+import { CloudflareD1Service, CloudflareImageService, CloudflareR2Service } from './services/cloudflare';
+
+export interface Bindings {
+  BUCKET: R2Bucket;
+  DB: D1Database;
+  IMAGES: ImagesBinding;
+  SECRET_KEY?: string;
+}
+
+const SESSION_COOKIE = 'secret-key';
+const SESSION_MAX_AGE = 30 * 24 * 60 * 60;
+const IMMUTABLE_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 
 const htmlShell = (clientScriptPath: string, stylePath: string, faviconPath: string) => `
+  <!doctype html>
   <html>
     <head>
       <meta charset="UTF-8">
@@ -26,118 +40,152 @@ const htmlShell = (clientScriptPath: string, stylePath: string, faviconPath: str
   </html>
 `;
 
-// 权限校验中间件
-const authMiddleware = async (c: Context, next: () => Promise<void>) => {
-  const secretKey = c.env.SECRET_KEY;
-
-  // 如果SECRET_KEY为空，跳过权限检查
-  if (!secretKey) {
-    return next();
-  }
-
-  // 从cookie或header获取提供的密钥
-  const providedKey = getCookie(c, 'secret-key');
-
-  // 如果没有提供密钥或密钥不匹配，返回401
-  if (!providedKey || providedKey !== secretKey) {
-    return c.json({
-      error: 'Unauthorized',
-      message: 'Valid secret key required'
-    }, 401);
-  }
-
-  return next();
+const hashSecret = async (value: string): Promise<Uint8Array> => {
+  const bytes = new TextEncoder().encode(value);
+  return new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
 };
 
-// Define bindings directly in Hono generic for better type inference with c.env
-const app = new Hono<{
-  Bindings: {
-    BUCKET: R2Bucket;
-    DB: D1Database;
-    IMAGES: ImagesBinding;
-    SECRET_KEY: string;
+const secretsMatch = async (provided: string, expected: string): Promise<boolean> => {
+  const [providedHash, expectedHash] = await Promise.all([hashSecret(provided), hashSecret(expected)]);
+  let mismatch = 0;
+  for (let index = 0; index < expectedHash.length; index += 1) {
+    mismatch |= providedHash[index] ^ expectedHash[index];
   }
-}>();
+  return mismatch === 0;
+};
 
-// 文件大小限制常量
-const MAX_SINGLE_UPLOAD_SIZE = 50 * 1024 * 1024; // 50MB - 单次上传的最大文件大小
+const authMiddleware: MiddlewareHandler<{ Bindings: Bindings }> = async (c, next) => {
+  const secretKey = c.env.SECRET_KEY;
+  if (!secretKey) {
+    return c.json({ error: 'SECRET_KEY is not configured' }, 503);
+  }
 
-// Define Zod schema for file upload
+  const providedKey = getCookie(c, SESSION_COOKIE);
+  if (!providedKey || !(await secretsMatch(providedKey, secretKey))) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  await next();
+};
+
+const fileHashSchema = z.string().regex(FILE_HASH_PATTERN, 'A SHA-256 hash is required');
+const fileKeySchema = z.string().regex(FILE_KEY_PATTERN, 'Invalid file key');
+const filenameSchema = z.string().trim().min(1).max(512);
+const mimeTypeSchema = z.string().trim().min(1).max(255).default('application/octet-stream');
+const fileSizeSchema = z.number().int().positive().max(MAX_UPLOAD_SIZE);
+
+const authSchema = z.object({
+  secret_key: z.string().min(1).max(4096),
+});
+
 const fileUploadFormSchema = z.object({
-  file: z.instanceof(File, { message: "File is required" })
-    .refine(file => file.size > 0, { message: "File cannot be empty" }),
-  hash: z.string(),
+  file: z.instanceof(File, { message: 'File is required' })
+    .refine((file) => file.size > 0, 'File cannot be empty')
+    .refine((file) => file.size <= MAX_SINGLE_UPLOAD_SIZE, 'File requires multipart upload'),
+  hash: fileHashSchema,
 });
 
-// 分片上传相关 schema
 const multipartCreateSchema = z.object({
-  filename: z.string(),
-  hash: z.string(),
+  filename: filenameSchema,
+  hash: fileHashSchema,
+  mime_type: mimeTypeSchema,
+  size: fileSizeSchema,
 });
 
-const multipartUploadSchema = z.object({
-  upload_id: z.string(),
-  key: z.string(),
-  part_number: z.number().min(1).max(10000),
+const multipartQuerySchema = z.object({
+  upload_id: z.string().min(1).max(1024),
+  key: fileKeySchema,
+  part_number: z.coerce.number().int().min(1).max(10000),
 });
+
+const multipartAbortSchema = multipartQuerySchema.omit({ part_number: true });
 
 const multipartCompleteSchema = z.object({
-  filename: z.string(),
-  hash: z.string(),
-  upload_id: z.string(),
+  filename: filenameSchema,
+  hash: fileHashSchema,
+  upload_id: z.string().min(1).max(1024),
   parts: z.array(z.object({
-    partNumber: z.number(),
-    etag: z.string(),
-  })),
-  mime_type: z.string(),
-  size: z.number(),
+    partNumber: z.number().int().min(1).max(10000),
+    etag: z.string().min(1),
+  })).min(1).max(10000).superRefine((parts, context) => {
+    const partNumbers = new Set<number>();
+    for (const part of parts) {
+      if (partNumbers.has(part.partNumber)) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: 'Duplicate part number' });
+        return;
+      }
+      partNumbers.add(part.partNumber);
+    }
+  }),
+  mime_type: mimeTypeSchema,
+  size: fileSizeSchema,
 });
 
 const fileUpdateSchema = z.object({
-  title: z.string().optional(),
-  description: z.string().optional(),
+  title: z.string().max(255).optional(),
+  description: z.string().max(4000).optional(),
 });
 
-const getFileKey = (originalFilename: string, md5: string) => {
-  const fileExtension = originalFilename.split('.').pop();
-  return fileExtension ? `${md5}.${fileExtension}` : md5;
-}
+const buildFileMetadata = (
+  key: string,
+  title: string,
+  mimeType: string,
+  size: number,
+  uploadedAt = new Date().toISOString(),
+): FileMetadata => ({
+  filename: key,
+  title,
+  description: '',
+  mime_type: mimeType || 'application/octet-stream',
+  size,
+  uploaded_at: uploadedAt,
+});
 
-// 安全的流式处理函数 - 不将整个文件加载到内存
-async function processStreamSafely<T>(
-  stream: ReadableStream,
-  processor: (chunk: Uint8Array) => void,
-  options?: { maxSize?: number }
-): Promise<void> {
-  const maxSize = options?.maxSize || 100 * 1024 * 1024; // 默认 100MB 限制
-  const reader = stream.getReader();
-  let processedSize = 0;
+const metadataFromObject = (
+  key: string,
+  title: string,
+  fallbackMimeType: string,
+  object: StorageObjectMetadata,
+): FileMetadata => buildFileMetadata(
+  key,
+  title,
+  object.contentType || fallbackMimeType,
+  object.contentLength,
+  object.customMetadata?.uploadedAt,
+);
 
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+const app = new Hono<{ Bindings: Bindings }>();
 
-      if (value) {
-        processedSize += value.length;
-        if (processedSize > maxSize) {
-          throw new Error(`Stream size exceeds maximum allowed size: ${maxSize} bytes`);
-        }
-        processor(value);
+export const route = app
+  .get('/', (c) => c.html(htmlShell('/static/client.js', '/static/assets/style.css', '/favicon.ico')))
+  .post(
+    '/api/auth/login',
+    zValidator('json', authSchema, (result, c) => {
+      if (!result.success) {
+        return c.json({ error: 'Invalid credentials' }, 400);
       }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-}
+    }),
+    async (c) => {
+      const secretKey = c.env.SECRET_KEY;
+      if (!secretKey) {
+        return c.json({ error: 'SECRET_KEY is not configured' }, 503);
+      }
 
-const route = app
-  .get('/', (c) => {
-    const clientScript = '/static/client.js';
-    const styleSheet = '/static/assets/style.css';
-    const favicon = '/favicon.ico';
-    return c.html(htmlShell(clientScript, styleSheet, favicon));
-  })
+      const { secret_key: providedKey } = c.req.valid('json');
+      if (!(await secretsMatch(providedKey, secretKey))) {
+        return c.json({ error: 'Unauthorized' }, 401);
+      }
+
+      setCookie(c, SESSION_COOKIE, providedKey, {
+        httpOnly: true,
+        secure: new URL(c.req.url).protocol === 'https:',
+        sameSite: 'Strict',
+        maxAge: SESSION_MAX_AGE,
+        path: '/',
+      });
+      return c.json({ authenticated: true });
+    },
+  )
   .get(
     '/api/files',
     authMiddleware,
@@ -147,28 +195,27 @@ const route = app
       }
     }),
     async (c) => {
-      const dbService = new CloudflareD1Service(c.env.DB as D1Database);
-
+      const db = new CloudflareD1Service(c.env.DB);
       try {
-        const queryParams = c.req.valid('query');
-        const files = await dbService.listFiles(queryParams);
-
+        const options = c.req.valid('query');
+        const [files, count] = await Promise.all([
+          db.listFiles(options),
+          db.countFiles(options),
+        ]);
         return c.json({
           files,
-          count: files.length,
-          ...(queryParams.limit && {
-            pagination: {
-              limit: queryParams.limit,
-              offset: queryParams.offset || 0,
-              hasMore: files.length === queryParams.limit
-            }
-          })
+          count,
+          pagination: {
+            limit: options.limit,
+            offset: options.offset,
+            hasMore: options.offset + files.length < count,
+          },
         });
-      } catch (error: any) {
+      } catch (error) {
         console.error('Error listing files:', error);
-        return c.json({ error: 'Failed to list files', details: error.message }, 500);
+        return c.json({ error: 'Failed to list files' }, 500);
       }
-    }
+    },
   )
   .post(
     '/api/files',
@@ -179,60 +226,42 @@ const route = app
       }
     }),
     async (c) => {
+      const storage = new CloudflareR2Service(c.env.BUCKET, 'files');
+      const db = new CloudflareD1Service(c.env.DB);
       try {
-        const storageService = new CloudflareR2Service(c.env.BUCKET, 'files');
-        const dbService = new CloudflareD1Service(c.env.DB as D1Database);
         const { file, hash } = c.req.valid('form');
+        const key = getFileKey(file.name, hash);
+        const [storedObject, databaseRecord] = await Promise.all([
+          storage.head(key),
+          db.getFile(key),
+        ]);
 
-        // 检查文件是否已存在（防止重复上传）
-        const filename = getFileKey(file.name, hash);
-        const existingFile = await storageService.get(filename);
-        if (existingFile) {
-          return c.json({
-            message: 'File already exists',
-            exists: true,
-            url: `/api/files/${filename}`,
-            metadata: existingFile,
-          });
+        if (storedObject) {
+          if (storedObject.contentLength !== file.size) {
+            return c.json({ error: 'Hash collision or invalid file hash' }, 409);
+          }
+          const metadata = databaseRecord ?? metadataFromObject(key, file.name, file.type, storedObject);
+          if (!databaseRecord) {
+            await db.saveFile(metadata);
+          }
+          return c.json({ message: 'File already exists', exists: true, url: `/files/${key}`, metadata });
         }
 
-        // 检查文件大小
-        if (file.size > MAX_SINGLE_UPLOAD_SIZE) {
-          return c.json({
-            error: `File too large. Maximum size is ${MAX_SINGLE_UPLOAD_SIZE / 1024 / 1024}MB`,
-            useMultipart: true
-          }, 413);
-        }
-
-        // 上传文件到存储
-        await storageService.put(filename, file.stream(), {
-          contentType: file.type,
+        const uploadedAt = new Date().toISOString();
+        await storage.put(key, file.stream(), {
+          contentType: file.type || 'application/octet-stream',
+          customMetadata: { uploadedAt },
         });
 
-        // 保存文件元数据到数据库
-        const metadata: FileMetadata = {
-          filename: filename,
-          title: file.name,
-          description: '',
-          mime_type: file.type,
-          size: file.size,
-          uploaded_at: new Date().toISOString(),
-        };
-
-        await dbService.saveFile(metadata);
-
-        return c.json({
-          message: 'File uploaded successfully',
-          url: `/api/files/${filename}`,
-          metadata,
-        });
-      } catch (error: any) {
+        const metadata = buildFileMetadata(key, file.name, file.type, file.size, uploadedAt);
+        await db.saveFile(metadata);
+        return c.json({ message: 'File uploaded successfully', exists: false, url: `/files/${key}`, metadata });
+      } catch (error) {
         console.error('Upload error:', error);
-        return c.json({ error: 'Upload failed', details: error.message }, 500);
+        return c.json({ error: 'Upload failed' }, 500);
       }
-    }
+    },
   )
-  // 分片上传 API
   .post(
     '/api/files/multipart/create',
     authMiddleware,
@@ -242,76 +271,72 @@ const route = app
       }
     }),
     async (c) => {
+      const storage = new CloudflareR2Service(c.env.BUCKET, 'files');
+      const db = new CloudflareD1Service(c.env.DB);
       try {
-        const storageService = new CloudflareR2Service(c.env.BUCKET, 'files');
-        const dbService = new CloudflareD1Service(c.env.DB as D1Database);
-        const { filename: originalFilename, hash } = c.req.valid('json');
+        const { filename, hash, mime_type, size } = c.req.valid('json');
+        const key = getFileKey(filename, hash);
+        const [storedObject, databaseRecord] = await Promise.all([
+          storage.head(key),
+          db.getFile(key),
+        ]);
 
-        if (!hash) {
-          return c.json({ error: 'Hash is required for multipart upload' }, 400);
+        if (storedObject) {
+          if (storedObject.contentLength !== size) {
+            return c.json({ error: 'Hash collision or invalid file hash' }, 409);
+          }
+          const metadata = databaseRecord ?? metadataFromObject(key, filename, mime_type, storedObject);
+          if (!databaseRecord) {
+            await db.saveFile(metadata);
+          }
+          return c.json({ message: 'File already exists', exists: true, url: `/files/${key}`, metadata });
         }
 
-        // 检查文件是否已存在
-        const filename = getFileKey(originalFilename, hash);
-        const existingFile = await storageService.head(filename);
-        if (existingFile) {
-          return c.json({
-            message: 'File already exists',
-            exists: true,
-            url: `/api/files/${filename}`,
-            metadata: existingFile,
-          });
+        if (databaseRecord) {
+          await db.deleteFile(key);
         }
-        // 创建分片上传
-        const multipartUpload = await c.env.BUCKET.createMultipartUpload(`files/${filename}`);
 
-        return c.json({
-          upload_id: multipartUpload.uploadId,
-          key: filename,
+        const uploadedAt = new Date().toISOString();
+        const upload = await c.env.BUCKET.createMultipartUpload(`files/${key}`, {
+          httpMetadata: { contentType: mime_type },
+          customMetadata: { uploadedAt, expectedSize: String(size) },
         });
+        return c.json({ upload_id: upload.uploadId, key });
       } catch (error) {
         console.error('Create multipart upload error:', error);
         return c.json({ error: 'Failed to create multipart upload' }, 500);
       }
-    }
+    },
   )
   .put(
     '/api/files/multipart/upload',
     authMiddleware,
+    zValidator('query', multipartQuerySchema, (result, c) => {
+      if (!result.success) {
+        return c.json({ error: 'Invalid multipart query', issues: result.error.issues }, 400);
+      }
+    }),
     async (c) => {
       try {
-        const upload_id = c.req.query('upload_id');
-        const key = c.req.query('key');
-        const part_number = c.req.query('part_number');
-
-        if (!upload_id || !key || !part_number) {
-          return c.json({ error: 'Missing upload_id, key, or part_number' }, 400);
-        }
-
-        const partNumberInt = parseInt(part_number, 10);
-        if (isNaN(partNumberInt) || partNumberInt < 1 || partNumberInt > 10000) {
-          return c.json({ error: 'Invalid part number' }, 400);
-        }
-
-        // 获取请求体作为 ReadableStream
+        const { upload_id, key, part_number } = c.req.valid('query');
         const body = c.req.raw.body;
         if (!body) {
           return c.json({ error: 'No request body provided' }, 400);
         }
+        const contentLength = Number(c.req.header('Content-Length'));
+        if (Number.isFinite(contentLength) && contentLength > MULTIPART_CHUNK_SIZE) {
+          return c.json({ error: 'Multipart chunk is too large' }, 413);
+        }
 
-        // 使用 R2 API 上传分片
-        const multipartUpload = c.env.BUCKET.resumeMultipartUpload(`files/${key}`, upload_id);
-        const uploadedPart = await multipartUpload.uploadPart(partNumberInt, body as any);
-
-        return c.json({
-          partNumber: partNumberInt,
-          etag: uploadedPart.etag,
-        });
+        const upload = c.env.BUCKET.resumeMultipartUpload(`files/${key}`, upload_id);
+        const uploadBody = body as unknown as Parameters<typeof upload.uploadPart>[1];
+        const part = await upload.uploadPart(part_number, uploadBody);
+        return c.json({ partNumber: part_number, etag: part.etag });
       } catch (error) {
         console.error('Part upload error:', error);
         return c.json({ error: 'Failed to upload part' }, 500);
       }
-    }
+    },
   )
   .post(
     '/api/files/multipart/complete',
@@ -322,185 +347,126 @@ const route = app
       }
     }),
     async (c) => {
+      const storage = new CloudflareR2Service(c.env.BUCKET, 'files');
+      const db = new CloudflareD1Service(c.env.DB);
       try {
-        const storageService = new CloudflareR2Service(c.env.BUCKET, 'files');
-        const dbService = new CloudflareD1Service(c.env.DB as D1Database);
-        const { upload_id, parts, mime_type, filename, size, hash } = c.req.valid('json');
-
-        // 再次检查文件是否已存在（防止竞争条件）
+        const { upload_id, parts, mime_type, filename, hash, size } = c.req.valid('json');
         const key = getFileKey(filename, hash);
-        const existingFile = await dbService.getFile(key);
-        if (existingFile) {
-          // 中止当前的分片上传
-          try {
-            const multipartUpload = c.env.BUCKET.resumeMultipartUpload(`files/${key}`, upload_id);
-            await multipartUpload.abort();
-          } catch (abortError) {
-            console.error('Failed to abort multipart upload:', abortError);
-          }
+        const [storedObject, databaseRecord] = await Promise.all([
+          storage.head(key),
+          db.getFile(key),
+        ]);
 
-          return c.json({
-            message: 'File already exists',
-            exists: true,
-            url: `/api/files/${key}`,
-            metadata: existingFile,
-          });
+        if (storedObject) {
+          if (storedObject.contentLength !== size) {
+            return c.json({ error: 'Completed object size does not match the upload' }, 409);
+          }
+          const metadata = databaseRecord ?? metadataFromObject(key, filename, mime_type, storedObject);
+          if (!databaseRecord) {
+            await db.saveFile(metadata);
+          }
+          return c.json({ message: 'File already exists', exists: true, url: `/files/${key}`, metadata });
         }
 
-        // 完成分片上传
-        const multipartUpload = c.env.BUCKET.resumeMultipartUpload(`files/${key}`, upload_id);
-        await multipartUpload.complete(parts);
+        if (databaseRecord) {
+          await db.deleteFile(key);
+        }
 
+        const upload = c.env.BUCKET.resumeMultipartUpload(`files/${key}`, upload_id);
+        await upload.complete([...parts].sort((left, right) => left.partNumber - right.partNumber));
+        const completedObject = await storage.head(key);
+        if (!completedObject) {
+          throw new Error('Completed object is unavailable');
+        }
+        if (completedObject.contentLength !== size) {
+          await storage.delete(key);
+          throw new Error('Completed object size does not match the upload');
+        }
 
-        // 保存文件元数据到数据库
-        const metadata: FileMetadata = {
-          filename: key,
-          title: filename,
-          description: '',
-          mime_type: mime_type,
-          size: size,
-          uploaded_at: new Date().toISOString(),
-        };
-
-        await dbService.saveFile(metadata);
-
-        return c.json({
-          message: 'File uploaded successfully',
-          url: `/api/files/${key}`,
-          exists: false,
-          metadata,
-        });
+        const metadata = metadataFromObject(key, filename, mime_type, completedObject);
+        await db.saveFile(metadata);
+        return c.json({ message: 'File uploaded successfully', exists: false, url: `/files/${key}`, metadata });
       } catch (error) {
         console.error('Complete multipart upload error:', error);
         return c.json({ error: 'Failed to complete multipart upload' }, 500);
       }
-    }
+    },
   )
   .delete(
     '/api/files/multipart/abort',
     authMiddleware,
+    zValidator('query', multipartAbortSchema, (result, c) => {
+      if (!result.success) {
+        return c.json({ error: 'Invalid multipart query', issues: result.error.issues }, 400);
+      }
+    }),
     async (c) => {
       try {
-        const upload_id = c.req.query('upload_id');
-        const key = c.req.query('key');
-
-        if (!upload_id || !key) {
-          return c.json({ error: 'Missing upload_id or key' }, 400);
-        }
-
-        // 中止分片上传
-        const multipartUpload = c.env.BUCKET.resumeMultipartUpload(`files/${key}`, upload_id);
-        await multipartUpload.abort();
-
+        const { upload_id, key } = c.req.valid('query');
+        const upload = c.env.BUCKET.resumeMultipartUpload(`files/${key}`, upload_id);
+        await upload.abort();
         return c.json({ message: 'Multipart upload aborted successfully' });
       } catch (error) {
         console.error('Abort multipart upload error:', error);
         return c.json({ error: 'Failed to abort multipart upload' }, 500);
       }
-    }
+    },
   )
   .get('/files/:filename', async (c) => {
     const { filename } = c.req.param();
     const level = c.req.query('level') as ImageCompressionLevel | undefined;
-
-    const dbService = new CloudflareD1Service(c.env.DB);
-    const originalFileStorage = new CloudflareR2Service(c.env.BUCKET, 'files');
+    const db = new CloudflareD1Service(c.env.DB);
+    const originalStorage = new CloudflareR2Service(c.env.BUCKET, 'files');
 
     try {
-      // Check if file exists in database
-      const fileRecord = await dbService.getFile(filename);
+      const fileRecord = await db.getFile(filename);
       if (!fileRecord) {
-        return c.json({ error: 'File not found in database' }, 404);
+        return c.json({ error: 'File not found' }, 404);
       }
 
-      // 对于大文件或非图像文件，直接流式返回，不进行压缩处理
-      const isLargeFile = fileRecord.size > 50 * 1024 * 1024; // 50MB 以上视为大文件
-
-      if (!fileRecord.mime_type.startsWith('image/') || !level || isLargeFile) {
+      if (!fileRecord.mime_type.startsWith('image/') || !level || fileRecord.size > 10 * 1024 * 1024) {
         return c.redirect(`/r2/files/${filename}`, 302);
       }
 
-      // Validate level parameter
-      const levelValidation = ImageCompressionLevelSchema.safeParse(level);
-      if (!levelValidation.success) {
-        // Invalid level, redirect to original
-        console.log(`Invalid level ${level}, redirecting to original file`);
+      const parsedLevel = ImageCompressionLevelSchema.safeParse(level);
+      if (!parsedLevel.success) {
         return c.redirect(`/r2/files/${filename}`, 302);
       }
 
-      const validLevel = levelValidation.data;
+      const validLevel = parsedLevel.data;
       const cacheStorage = new CloudflareR2Service(c.env.BUCKET, `cache/${validLevel}`);
-
-      // Check if cached version already exists
-      const cachedObject = await cacheStorage.head(filename);
-      if (cachedObject) {
-        // Cached version exists, redirect to it
-        console.log(`Cached version ${filename} at level ${validLevel} exists, redirecting to it`);
+      if (await cacheStorage.head(filename)) {
         return c.redirect(`/r2/cache/${validLevel}/${filename}`, 302);
       }
 
-      // 对于小图像文件，尝试压缩
-      if (fileRecord.size <= 10 * 1024 * 1024) { // 10MB 以下的图像才进行压缩
-        // Get original image from R2
-        const originalObject = await originalFileStorage.get(filename);
-        if (!originalObject || !originalObject.body) {
-          return c.json({ error: 'Original file not found in storage' }, 404);
-        }
-
-        try {
-          // 安全地处理小图像文件
-          const chunks: Uint8Array[] = [];
-          let totalSize = 0;
-
-          await processStreamSafely(
-            originalObject.body as ReadableStream,
-            (chunk) => {
-              chunks.push(chunk);
-              totalSize += chunk.length;
-            },
-            { maxSize: 10 * 1024 * 1024 } // 10MB 限制
-          );
-
-          // 重新组合为 ArrayBuffer
-          const imageData = new Uint8Array(totalSize);
-          let offset = 0;
-          for (const chunk of chunks) {
-            imageData.set(chunk, offset);
-            offset += chunk.length;
-          }
-
-          // Use CloudFlareImageService for compression
-          const imageService = new CloudFlareImageService(c.env.IMAGES);
-          const compressed = await imageService.compress(imageData.buffer, validLevel);
-
-          if (compressed && compressed.data) {
-            // Cache the compressed image
-            await cacheStorage.put(filename, compressed.data, { contentType: compressed.mimeType });
-
-            console.log(`Successfully cached ${filename} at level ${validLevel}`);
-
-            // Redirect to cached version
-            return c.redirect(`/r2/cache/${validLevel}/${filename}`, 302);
-          } else {
-            throw new Error('Image compression failed');
-          }
-
-        } catch (transformError) {
-          console.error(`Failed to process ${filename} at level ${validLevel}:`, transformError);
-          // Transform failed, redirect to original
-          return c.redirect(`/r2/files/${filename}`, 302);
-        }
-      } else {
-        // 大图像文件直接返回原文件
+      const originalObject = await originalStorage.get(filename);
+      if (!originalObject?.body) {
+        return c.json({ error: 'Original file not found' }, 404);
+      }
+      if (originalObject.metadata.contentLength > 10 * 1024 * 1024) {
         return c.redirect(`/r2/files/${filename}`, 302);
       }
 
-    } catch (error: any) {
+      try {
+        const imageData = await new Response(originalObject.body).arrayBuffer();
+        const imageService = new CloudflareImageService(c.env.IMAGES);
+        const compressed = await imageService.compress(imageData, validLevel);
+        if (!compressed) {
+          throw new Error('Image compression failed');
+        }
+        await cacheStorage.put(filename, compressed.data, { contentType: compressed.mimeType });
+        return c.redirect(`/r2/cache/${validLevel}/${filename}`, 302);
+      } catch (error) {
+        console.error(`Failed to compress ${filename}:`, error);
+        return c.redirect(`/r2/files/${filename}`, 302);
+      }
+    } catch (error) {
       console.error(`Error processing file ${filename}:`, error);
-      return c.json({ error: 'Failed to process file', details: error.message }, 500);
+      return c.json({ error: 'Failed to process file' }, 500);
     }
   })
-  .put('/api/files/:filename',
+  .put(
+    '/api/files/:filename',
     authMiddleware,
     zValidator('json', fileUpdateSchema, (result, c) => {
       if (!result.success) {
@@ -509,259 +475,121 @@ const route = app
     }),
     async (c) => {
       const { filename } = c.req.param();
-      const { title, description } = c.req.valid('json');
-      const dbService = new CloudflareD1Service(c.env.DB);
-
+      const db = new CloudflareD1Service(c.env.DB);
       try {
-        // Check if file exists in database
-        const fileRecord = await dbService.getFile(filename);
+        const fileRecord = await db.getFile(filename);
         if (!fileRecord) {
           return c.json({ error: 'File not found' }, 404);
         }
 
-        // Update file information
-        const updatedRecord = {
+        const { title, description } = c.req.valid('json');
+        const updatedRecord: FileMetadata = {
           ...fileRecord,
-          title: title !== undefined ? title : fileRecord.title,
-          description: description !== undefined ? description : fileRecord.description,
+          title: title ?? fileRecord.title,
+          description: description ?? fileRecord.description,
         };
-
-        await dbService.saveFile(updatedRecord);
-
-        return c.json({
-          message: 'File information updated successfully',
-          info: updatedRecord
-        });
-      } catch (error: any) {
+        await db.saveFile(updatedRecord);
+        return c.json({ message: 'File information updated successfully', info: updatedRecord });
+      } catch (error) {
         console.error(`Error updating file ${filename}:`, error);
-        return c.json({ error: 'Failed to update file information', details: error.message }, 500);
+        return c.json({ error: 'Failed to update file information' }, 500);
       }
-    }
+    },
   )
   .delete('/api/files/:filename', authMiddleware, async (c) => {
     const { filename } = c.req.param();
-    const storageService = new CloudflareR2Service(c.env.BUCKET as R2Bucket, 'files');
-    const dbService = new CloudflareD1Service(c.env.DB as D1Database);
+    const db = new CloudflareD1Service(c.env.DB);
+    const originalStorage = new CloudflareR2Service(c.env.BUCKET, 'files');
 
     try {
-      // Check if file exists in database
-      const fileRecord = await dbService.getFile(filename);
-      if (!fileRecord) {
-        return c.json({ error: 'File not found' }, 404);
-      }
-
-      // Delete from R2 storage
-      await storageService.delete(filename);
-
-      // Delete from cache
-      const cacheStorage = new CloudflareR2Service(c.env.BUCKET as R2Bucket, 'cache');
-      const cacheDeletePromises = Object.values(ImageCompressionLevelSchema.enum).map(async (level) => {
-        try {
-          // Check if cache file exists
-          const cacheObject = await cacheStorage.head(`${level}/${filename}`);
-          if (cacheObject) {
-            await cacheStorage.delete(`${level}/${filename}`);
-            console.log(`Successfully deleted cache for file ${filename} at level ${level}`);
-          }
-        } catch (error: any) {
-          console.error(`Error deleting cache for file ${filename} at level ${level}:`, error);
-        }
-      });
-      await Promise.allSettled(cacheDeletePromises);
-
-      // Delete from D1 database
-      await dbService.deleteFile(filename);
-
+      const cacheDeletions = ImageCompressionLevelSchema.options.map((level) => (
+        new CloudflareR2Service(c.env.BUCKET, `cache/${level}`).delete(filename)
+      ));
+      await Promise.all([originalStorage.delete(filename), ...cacheDeletions]);
+      await db.deleteFile(filename);
       return c.json({ message: 'File deleted successfully' });
-    } catch (error: any) {
+    } catch (error) {
       console.error(`Error deleting file ${filename}:`, error);
-      return c.json({ error: 'Failed to delete file', details: error.message }, 500);
+      return c.json({ error: 'Failed to delete file' }, 500);
     }
   })
   .get('/r2/files/:filename', async (c) => {
-    const { filename } = c.req.param();
-    const storageService = new CloudflareR2Service(c.env.BUCKET as R2Bucket, 'files');
-    return streamR2Object(c, storageService, filename);
+    const storage = new CloudflareR2Service(c.env.BUCKET, 'files');
+    return streamR2Object(c, storage, c.req.param('filename'));
   })
-  .get('/r2/cache/:level/:filename',
+  .get(
+    '/r2/cache/:level/:filename',
     validator('param', (value, c) => {
-      const parsedLevel = ImageCompressionLevelSchema.safeParse(value.level);
-      if (!parsedLevel.success) {
+      const level = ImageCompressionLevelSchema.safeParse(value.level);
+      if (!level.success) {
         return c.text('Invalid compression level', 400);
       }
-      return { level: parsedLevel.data, filename: value.filename };
+      return { level: level.data, filename: value.filename };
     }),
     async (c) => {
       const { level, filename } = c.req.valid('param');
-      const cacheStorage = new CloudflareR2Service(c.env.BUCKET as R2Bucket, `cache/${level}`);
-
-      // Simply serve the cached file if it exists
-      return streamR2Object(c, cacheStorage, filename);
-    }
+      const storage = new CloudflareR2Service(c.env.BUCKET, `cache/${level}`);
+      return streamR2Object(c, storage, filename);
+    },
   );
 
-// --- Helper to stream R2 object with headers ---
-async function streamR2Object(c: Context, storageService: StorageService, key: string, cacheControl?: string) {
+const buildObjectHeaders = (
+  metadata: StorageObjectMetadata,
+  contentLength: number,
+): Headers => {
+  const headers = new Headers({
+    'Accept-Ranges': 'bytes',
+    'Cache-Control': IMMUTABLE_CACHE_CONTROL,
+    'Content-Length': String(contentLength),
+    'X-Content-Type-Options': 'nosniff',
+  });
+  if (metadata.contentType) {
+    headers.set('Content-Type', metadata.contentType);
+  }
+  if (metadata.etag) {
+    headers.set('ETag', metadata.etag);
+  }
+  return headers;
+};
+
+async function streamR2Object(c: Context, storage: StorageService, key: string): Promise<Response> {
   try {
-    // Check for Range header for partial content requests
     const rangeHeader = c.req.header('Range');
-
     if (rangeHeader) {
-      // For range requests, use R2 bucket directly to get native range support
-      const rangeMatch = rangeHeader.match(/bytes=(\d*)-(\d*)/);
-      if (rangeMatch) {
-        const start = rangeMatch[1] ? parseInt(rangeMatch[1], 10) : undefined;
-        const end = rangeMatch[2] ? parseInt(rangeMatch[2], 10) : undefined;
-
-        // Use R2's native range support
-        const rangeOptions: any = {};
-
-        if (start !== undefined && end !== undefined) {
-          // Both start and end specified: bytes=start-end
-          rangeOptions.offset = start;
-          rangeOptions.length = end - start + 1;
-        } else if (start !== undefined && end === undefined) {
-          // Only start specified: bytes=start-
-          rangeOptions.offset = start;
-        } else if (start === undefined && end !== undefined) {
-          // Only end specified: bytes=-suffix (last N bytes)
-          rangeOptions.suffix = end + 1;
-        }
-
-        try {
-          // 检查是否在本地开发环境
-          const isLocalDev = typeof globalThis.navigator === 'undefined' ||
-            c.req.url.includes('localhost') ||
-            c.req.url.includes('127.0.0.1');
-
-          if (isLocalDev) {
-            // 本地开发环境：使用常规get然后手动处理范围
-            const fullObject = await storageService.get(key);
-            if (!fullObject || !fullObject.body) {
-              return c.json({ error: 'Object Not Found' }, 404);
-            }
-
-            // 获取完整内容的大小
-            const contentLength = fullObject.metadata?.contentLength;
-            if (!contentLength) {
-              return c.json({ error: 'Content length unavailable' }, 500);
-            }
-
-            // 验证范围
-            const actualStart = start || 0;
-            const actualEnd = end !== undefined ? Math.min(end, contentLength - 1) : contentLength - 1;
-
-            if (actualStart >= contentLength || actualEnd >= contentLength || actualStart > actualEnd) {
-              const headers = new Headers();
-              headers.set('Content-Range', `bytes */${contentLength}`);
-              return new Response('Range Not Satisfiable', {
-                status: 416,
-                headers,
-              });
-            }
-
-            // 对于小范围或小文件，读取并切片
-            const rangeSize = actualEnd - actualStart + 1;
-            if (rangeSize <= 10 * 1024 * 1024 || contentLength <= 50 * 1024 * 1024) { // 10MB范围或50MB文件
-              try {
-                // 读取完整对象
-                const response = new Response(fullObject.body as ReadableStream);
-                const arrayBuffer = await response.arrayBuffer();
-                const slice = arrayBuffer.slice(actualStart, actualEnd + 1);
-
-                const headers = new Headers();
-                if (fullObject.metadata?.contentType) {
-                  headers.set('Content-Type', fullObject.metadata.contentType);
-                }
-                if (fullObject.metadata?.etag) {
-                  headers.set('ETag', fullObject.metadata.etag);
-                }
-                if (cacheControl) {
-                  headers.set('Cache-Control', cacheControl);
-                }
-                headers.set('Content-Range', `bytes ${actualStart}-${actualEnd}/${contentLength}`);
-                headers.set('Content-Length', rangeSize.toString());
-                headers.set('Accept-Ranges', 'bytes');
-
-                return new Response(slice, {
-                  status: 206,
-                  headers,
-                });
-              } catch (sliceError) {
-                console.error('Local range slicing failed:', sliceError);
-                // Fall through to production logic
-              }
-            }
-          }
-
-          // 生产环境或本地环境大文件：使用R2原生range
-          const r2Object = await c.env.BUCKET.get(`files/${key}`, { range: rangeOptions });
-
-          if (r2Object === null || r2Object.body === null) {
-            return c.json({ error: 'Object Not Found' }, 404);
-          }
-
-          const headers = new Headers();
-          if (r2Object.httpMetadata?.contentType) {
-            headers.set('Content-Type', r2Object.httpMetadata.contentType);
-          }
-          if (r2Object.httpEtag) {
-            headers.set('ETag', r2Object.httpEtag);
-          }
-          if (cacheControl) {
-            headers.set('Cache-Control', cacheControl);
-          }
-
-          // Set range headers using R2Object properties
-          if (r2Object.range) {
-            headers.set('Content-Range', `bytes ${r2Object.range.offset}-${r2Object.range.offset + r2Object.range.length - 1}/${r2Object.size}`);
-            headers.set('Content-Length', r2Object.range.length.toString());
-          } else {
-            headers.set('Content-Length', r2Object.size.toString());
-          }
-          headers.set('Accept-Ranges', 'bytes');
-
-          return new Response(r2Object.body as BodyInit, {
-            status: 206, // Partial Content
-            headers,
-          });
-        } catch (rangeError) {
-          console.error('Range request failed, falling back to full object:', rangeError);
-          // Fall through to regular get
-        }
+      const metadata = await storage.head(key);
+      if (!metadata) {
+        return c.json({ error: 'Object not found' }, 404);
       }
+
+      const parsedRange = parseRangeHeader(rangeHeader, metadata.contentLength);
+      if (!parsedRange.valid) {
+        return new Response('Range Not Satisfiable', {
+          status: 416,
+          headers: { 'Content-Range': `bytes */${metadata.contentLength}` },
+        });
+      }
+
+      const object = await storage.get(key, parsedRange.range);
+      if (!object?.body) {
+        return c.json({ error: 'Object not found' }, 404);
+      }
+
+      const headers = buildObjectHeaders(metadata, parsedRange.range.length);
+      const end = parsedRange.range.offset + parsedRange.range.length - 1;
+      headers.set('Content-Range', `bytes ${parsedRange.range.offset}-${end}/${metadata.contentLength}`);
+      return new Response(object.body, { status: 206, headers });
     }
 
-    // For non-range requests or failed range requests, use regular get
-    const object = await storageService.get(key);
-    if (object === null || object.body === null) {
-      return c.json({ error: 'Object Not Found' }, 404);
+    const object = await storage.get(key);
+    if (!object?.body) {
+      return c.json({ error: 'Object not found' }, 404);
     }
-
-    const headers = new Headers();
-    if (object.metadata?.contentType) {
-      headers.set('Content-Type', object.metadata.contentType);
-    }
-    if (object.metadata?.etag) {
-      headers.set('ETag', object.metadata.etag);
-    }
-    if (cacheControl) {
-      headers.set('Cache-Control', cacheControl);
-    }
-
-    // For full objects, we need to get the size from metadata
-    const contentLength = object.metadata?.contentLength;
-    if (contentLength !== undefined) {
-      headers.set('Content-Length', contentLength.toString());
-    }
-    headers.set('Accept-Ranges', 'bytes');
-
-    return new Response(object.body as BodyInit, {
-      headers,
+    return new Response(object.body, {
+      headers: buildObjectHeaders(object.metadata, object.metadata.contentLength),
     });
-  } catch (error: any) {
-    console.error(`Failed to get object ${key} from R2:`, error);
-    return c.json({ error: 'Failed to retrieve file', details: error.message }, 500);
+  } catch (error) {
+    console.error(`Failed to retrieve ${key} from R2:`, error);
+    return c.json({ error: 'Failed to retrieve file' }, 500);
   }
 }
 

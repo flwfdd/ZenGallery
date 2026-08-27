@@ -1,7 +1,5 @@
 -- Migration number: 0001 	 2024-05-22_16_00_00_create_files_table.sql
-DROP TABLE IF EXISTS files;
-
-CREATE TABLE files (
+CREATE TABLE IF NOT EXISTS files (
     filename TEXT PRIMARY KEY,    -- R2 key, e.g., md5sum.extension
     title TEXT,
     description TEXT,

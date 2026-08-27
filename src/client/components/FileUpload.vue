@@ -34,7 +34,9 @@
               {{ isDragOver
                 ? t('upload.dropFiles')
                 : (selectedFiles.length > 0 ? t('upload.addMoreFiles') : t('upload.dropzone')) }}</p>
-            <p class="text-sm sm:text-base text-slate-600 dark:text-slate-400">{{ t('upload.dropzoneSubtitle') }}</p>
+            <p class="text-sm sm:text-base text-slate-600 dark:text-slate-400">{{
+              t('upload.dropzoneSubtitle', { maxSize: formatFileSize(MAX_UPLOAD_SIZE) })
+            }}</p>
           </div>
         </label>
       </div>
@@ -164,11 +166,12 @@
 
 <script setup lang="ts">
 import { hc } from 'hono/client';
-import { Check, CheckCircle, File, LoaderCircle, Upload, X, XCircle } from 'lucide-vue-next';
+import { createSHA256 } from 'hash-wasm';
+import { Check, CheckCircle, File, LoaderCircle, Upload, X, XCircle } from '@lucide/vue';
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppType } from '../../api/index';
-
+import { MAX_SINGLE_UPLOAD_SIZE, MAX_UPLOAD_SIZE, MULTIPART_CHUNK_SIZE } from '../../common/files';
 
 const { t } = useI18n();
 const client = hc<AppType>('/');
@@ -176,18 +179,63 @@ const client = hc<AppType>('/');
 const emit = defineEmits<{
   uploadComplete: [];
   showToast: [message: string];
+  authenticationRequired: [];
 }>();
+
+interface UploadResult {
+  message?: string;
+  url?: string;
+  exists?: boolean;
+  duplicate?: boolean;
+  error?: string;
+  details?: string;
+  filename?: string;
+}
+
+type UploadSuccess = UploadResult;
+type UploadedPart = { partNumber: number; etag: string };
+type PartResult = UploadedPart | { error: Error };
+
+class UploadHttpError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
+const asError = (error: unknown): Error => error instanceof Error ? error : new Error(String(error));
+
+interface JsonErrorResponse {
+  clone(): { json(): Promise<unknown> };
+}
+
+const responseError = async (response: JsonErrorResponse, fallback: string): Promise<string> => {
+  try {
+    const data = await response.clone().json() as { error?: string };
+    return data.error || fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+const xhrErrorMessage = (xhr: XMLHttpRequest, fallback: string): string => {
+  try {
+    const data = JSON.parse(xhr.responseText) as { error?: unknown };
+    if (typeof data.error === 'string') return data.error;
+  } catch {
+    // The fallback includes the status when the response is not JSON.
+  }
+  return fallback;
+};
 
 // 文件上传相关状态
 const fileInput = ref<HTMLInputElement>();
 const selectedFiles = ref<File[]>([]);
 const isUploading = ref(false);
-const uploadProgress = ref(0);
-const uploadResults = ref<Array<any>>([]);
+const uploadResults = ref<UploadResult[]>([]);
 
 // 简化的进度追踪状态
 const fileProgresses = ref<Record<number, number>>({});
-const fileStatuses = ref<Record<number, 'waiting' | 'uploading' | 'completed' | 'error' | 'duplicate'>>({});
+const fileStatuses = ref<Record<number, 'waiting' | 'hashing' | 'uploading' | 'completed' | 'error' | 'duplicate'>>({});
 const currentUploadingFile = ref('');
 const completedFiles = ref(0);
 
@@ -201,7 +249,7 @@ const overallProgress = computed(() => {
 // 获取文件图标
 const getFileIcon = (index: number) => {
   const status = fileStatuses.value[index];
-  if (status === 'uploading') return LoaderCircle;
+  if (status === 'hashing' || status === 'uploading') return LoaderCircle;
   if (status === 'completed') return Check;
   if (status === 'error') return XCircle;
   return File;
@@ -212,6 +260,7 @@ const getUploadStatusText = (index: number) => {
   const status = fileStatuses.value[index];
   switch (status) {
     case 'waiting': return t('upload.waiting');
+    case 'hashing': return t('upload.hashing');
     case 'uploading': return t('upload.uploading');
     case 'completed': return t('upload.completed');
     case 'error': return t('upload.error');
@@ -224,6 +273,7 @@ const getUploadStatusText = (index: number) => {
 const getProgressBarClass = (index: number) => {
   const status = fileStatuses.value[index];
   switch (status) {
+    case 'hashing':
     case 'uploading': return 'bg-gradient-to-r from-cyan-400 to-cyan-600 dark:from-cyan-500 dark:to-cyan-700';
     case 'completed': return 'bg-gradient-to-r from-green-400 to-green-600 dark:from-green-500 dark:to-green-700';
     case 'error': return 'bg-gradient-to-r from-red-400 to-red-600 dark:from-red-500 dark:to-red-700';
@@ -269,16 +319,10 @@ const clearAllFiles = () => {
   }
 };
 
-// 文件大小限制常量
-const MAX_UPLOAD_SIZE = 10 * 1024 * 1024 * 1024; // 10GB - 上传的最大文件大小
-const MAX_SINGLE_UPLOAD_SIZE = 50 * 1024 * 1024; // 50MB - 单次上传的最大文件大小
-const CHUNK_SIZE = 25 * 1024 * 1024; // 25MB - 分片大小
-
 // 并发控制器类
 class ConcurrentUploadController {
   private maxConcurrency: number;
-  private activeWorkers: number = 0;
-  private taskQueue: Array<() => Promise<any>> = [];
+  private taskQueue: Array<() => Promise<UploadedPart>> = [];
   private totalTasks: number = 0;
   private progressCallback?: (progress: number) => void;
   private partialProgresses: Map<number, number> = new Map(); // 存储每个任务的部分进度
@@ -288,7 +332,7 @@ class ConcurrentUploadController {
   }
 
   // 添加任务到队列（生产者）
-  addTask(task: () => Promise<any>, taskId: number) {
+  addTask(task: () => Promise<UploadedPart>, taskId: number) {
     this.taskQueue.push(task);
     this.totalTasks++;
     this.partialProgresses.set(taskId, 0);
@@ -327,8 +371,8 @@ class ConcurrentUploadController {
   }
 
   // 启动工作者（消费者）
-  async startWorkers(): Promise<any[]> {
-    const results: any[] = [];
+  async startWorkers(): Promise<PartResult[]> {
+    const results: PartResult[] = [];
     const workers: Promise<void>[] = [];
 
     // 启动工作者
@@ -342,9 +386,7 @@ class ConcurrentUploadController {
   }
 
   // 工作者函数
-  private async worker(results: any[]) {
-    this.activeWorkers++;
-
+  private async worker(results: PartResult[]) {
     while (this.taskQueue.length > 0) {
       const task = this.taskQueue.shift();
       if (!task) break;
@@ -353,43 +395,33 @@ class ConcurrentUploadController {
         const result = await task();
         results.push(result);
       } catch (error) {
-        results.push({ error });
+        results.push({ error: asError(error) });
       }
     }
-
-    this.activeWorkers--;
   }
 }
 
-// 单个文件上传函数（支持进度追踪和MD5计算）
-const uploadSingleFile = (file: File, index: number): Promise<any> => {
-  return new Promise(async (resolve, reject) => {
-    try {
-      // 计算文件指纹（很快，不需要显示进度）
-      const hash = await calculateFileHash(file);
+// 单个文件上传函数：分块计算 SHA-256 后按大小选择上传方式
+const uploadSingleFile = async (file: File, index: number): Promise<UploadSuccess> => {
+  try {
+    fileStatuses.value[index] = 'hashing';
+    fileProgresses.value[index] = 0;
+    const hash = await calculateFileHash(file, (progress) => {
+      fileProgresses.value[index] = progress * 10;
+    });
 
-      // 直接开始上传
-      fileStatuses.value[index] = 'uploading';
-      fileProgresses.value[index] = 0;
-
-      // 根据文件大小选择上传方式
-      if (file.size > MAX_SINGLE_UPLOAD_SIZE) {
-        const result = await uploadFileMultipart(file, index, hash);
-        resolve(result);
-      } else {
-        const result = await uploadFileSingle(file, index, hash);
-        resolve(result);
-      }
-
-    } catch (error) {
-      fileStatuses.value[index] = 'error';
-      reject(error);
-    }
-  });
+    fileStatuses.value[index] = 'uploading';
+    return file.size > MAX_SINGLE_UPLOAD_SIZE
+      ? await uploadFileMultipart(file, index, hash)
+      : await uploadFileSingle(file, index, hash);
+  } catch (error) {
+    fileStatuses.value[index] = 'error';
+    throw error;
+  }
 };
 
 // 单次上传实现
-const uploadFileSingle = (file: File, index: number, hash: string): Promise<any> => {
+const uploadFileSingle = (file: File, index: number, hash: string): Promise<UploadSuccess> => {
   return new Promise((resolve, reject) => {
     const formData = new FormData();
     formData.append('file', file);
@@ -401,7 +433,7 @@ const uploadFileSingle = (file: File, index: number, hash: string): Promise<any>
     xhr.upload.addEventListener('progress', (event) => {
       if (event.lengthComputable) {
         const progress = (event.loaded / event.total) * 100;
-        fileProgresses.value[index] = progress;
+        fileProgresses.value[index] = 10 + progress * 0.9;
       }
     });
 
@@ -409,7 +441,7 @@ const uploadFileSingle = (file: File, index: number, hash: string): Promise<any>
     xhr.addEventListener('load', () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
-          const response = JSON.parse(xhr.responseText);
+          const response = JSON.parse(xhr.responseText) as UploadSuccess;
           fileProgresses.value[index] = 100;
 
           // 检查是否是重复文件
@@ -421,25 +453,23 @@ const uploadFileSingle = (file: File, index: number, hash: string): Promise<any>
 
           completedFiles.value++;
           resolve(response);
-        } catch (error) {
+        } catch {
           fileStatuses.value[index] = 'error';
           reject(new Error('Invalid response format'));
         }
       } else {
         fileStatuses.value[index] = 'error';
-        try {
-          const errorData = JSON.parse(xhr.responseText);
-          reject(new Error(errorData.error || 'Upload failed'));
-        } catch {
-          reject(new Error(`HTTP ${xhr.status}: ${xhr.statusText}`));
-        }
+        reject(new UploadHttpError(
+          xhrErrorMessage(xhr, `HTTP ${xhr.status}: ${xhr.statusText}`),
+          xhr.status,
+        ));
       }
     });
 
     // 错误处理
     xhr.addEventListener('error', () => {
       fileStatuses.value[index] = 'error';
-      reject(new Error('Network error during upload'));
+      reject(new UploadHttpError('Network error during upload', 0));
     });
 
     // 中断处理
@@ -460,7 +490,7 @@ const uploadPart = async (
   key: string,
   partNumber: number,
   onPartProgress?: (progress: number) => void
-): Promise<{ partNumber: number; etag: string }> => {
+): Promise<UploadedPart> => {
   return new Promise((resolve, reject) => {
     const url = `/api/files/multipart/upload?upload_id=${encodeURIComponent(uploadId)}&key=${encodeURIComponent(key)}&part_number=${partNumber}`;
     const xhr = new XMLHttpRequest();
@@ -477,24 +507,22 @@ const uploadPart = async (
     xhr.addEventListener('load', () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
-          const response = JSON.parse(xhr.responseText);
+          const response = JSON.parse(xhr.responseText) as UploadedPart;
           resolve(response);
-        } catch (error) {
+        } catch {
           reject(new Error('Invalid response format'));
         }
       } else {
-        try {
-          const errorData = JSON.parse(xhr.responseText);
-          reject(new Error(errorData.error || `HTTP ${xhr.status}: ${xhr.statusText}`));
-        } catch {
-          reject(new Error(`HTTP ${xhr.status}: ${xhr.statusText}`));
-        }
+        reject(new UploadHttpError(
+          xhrErrorMessage(xhr, `HTTP ${xhr.status}: ${xhr.statusText}`),
+          xhr.status,
+        ));
       }
     });
 
     // 错误处理
     xhr.addEventListener('error', () => {
-      reject(new Error('Network error during part upload'));
+      reject(new UploadHttpError('Network error during part upload', 0));
     });
 
     // 中断处理
@@ -508,18 +536,25 @@ const uploadPart = async (
 };
 
 // 分片上传函数
-const uploadFileMultipart = async (file: File, index: number, hash: string): Promise<any> => {
+const uploadFileMultipart = async (file: File, index: number, hash: string): Promise<UploadSuccess> => {
+  let uploadId: string | undefined;
+  let key: string | undefined;
   try {
     // 1. 创建分片上传
     const createResponse = await client.api.files.multipart.create.$post({
       json: {
         filename: file.name,
         hash: hash,
+        mime_type: file.type || 'application/octet-stream',
+        size: file.size,
       },
     });
 
     if (!createResponse.ok) {
-      throw new Error(`Failed to create multipart upload: ${createResponse.statusText}`);
+      throw new UploadHttpError(
+        await responseError(createResponse, 'Failed to create multipart upload'),
+        createResponse.status,
+      );
     }
 
     const createData = await createResponse.json();
@@ -533,13 +568,11 @@ const uploadFileMultipart = async (file: File, index: number, hash: string): Pro
     }
 
     // 计算分片数量
-    const totalParts = Math.ceil(file.size / CHUNK_SIZE);
-    console.log(`Started multipart upload for ${file.name}: ${totalParts} parts, hash: ${hash}, file size: ${file.size} bytes`);
+    const totalParts = Math.ceil(file.size / MULTIPART_CHUNK_SIZE);
 
     // 2. 使用并发控制器进行并行上传
-    let upload_id, key: string;
     if ('upload_id' in createData && 'key' in createData) {
-      upload_id = createData.upload_id;
+      uploadId = createData.upload_id;
       key = createData.key;
     } else {
       throw new Error('Invalid response format');
@@ -550,28 +583,26 @@ const uploadFileMultipart = async (file: File, index: number, hash: string): Pro
 
     // 设置进度回调
     uploadController.setProgressCallback((progress) => {
-      fileProgresses.value[index] = progress;
+      fileProgresses.value[index] = 10 + progress * 0.9;
     });
 
     // 生产者：将所有分片任务加入队列
     for (let partNumber = 1; partNumber <= totalParts; partNumber++) {
-      const start = (partNumber - 1) * CHUNK_SIZE;
-      const end = Math.min(start + CHUNK_SIZE, file.size);
+      const start = (partNumber - 1) * MULTIPART_CHUNK_SIZE;
+      const end = Math.min(start + MULTIPART_CHUNK_SIZE, file.size);
       const chunk = file.slice(start, end);
 
-      console.log(`Adding part ${partNumber}/${totalParts} to queue: ${chunk.size} bytes`);
 
       // 创建上传任务
       const uploadTask = () => {
         return new Promise<{ partNumber: number; etag: string }>((resolve, reject) => {
-          uploadPart(chunk, upload_id, key, partNumber, (partProgress) => {
+          uploadPart(chunk, uploadId!, key!, partNumber, (partProgress) => {
             // 更新这个分片的进度（0-1范围）
             uploadController.updatePartialProgress(partNumber, partProgress);
           })
             .then(result => {
               // 标记任务完成
               uploadController.markTaskCompleted(partNumber);
-              console.log(`Completed part ${partNumber}/${totalParts} with etag: ${result.etag}`);
               resolve(result);
             })
             .catch(reject);
@@ -582,24 +613,23 @@ const uploadFileMultipart = async (file: File, index: number, hash: string): Pro
     }
 
     // 消费者：启动工作者开始并发上传
-    console.log(`Starting concurrent upload with ${Math.min(3, totalParts)} workers`);
     const results = await uploadController.startWorkers();
 
     // 检查是否有错误
-    const errors = results.filter(result => result.error);
+    const errors = results.filter((result): result is { error: Error } => 'error' in result);
     if (errors.length > 0) {
       throw new Error(`Failed to upload ${errors.length} parts: ${errors[0].error.message}`);
     }
 
     // 提取上传结果
-    const uploadedParts = results.filter(result => !result.error) as { partNumber: number; etag: string }[];
+    const uploadedParts = results.filter((result): result is UploadedPart => !('error' in result));
 
     // 3. 完成分片上传
     const completeResponse = await client.api.files.multipart.complete.$post({
       json: {
         filename: file.name,
         hash: hash,
-        upload_id: upload_id,
+        upload_id: uploadId,
         parts: uploadedParts.sort((a, b) => a.partNumber - b.partNumber),
         mime_type: file.type || 'application/octet-stream',
         size: file.size,
@@ -607,10 +637,13 @@ const uploadFileMultipart = async (file: File, index: number, hash: string): Pro
     });
 
     if (!completeResponse.ok) {
-      throw new Error(`Failed to complete multipart upload: ${completeResponse.statusText}`);
+      throw new UploadHttpError(
+        await responseError(completeResponse, 'Failed to complete multipart upload'),
+        completeResponse.status,
+      );
     }
 
-    const result = await completeResponse.json() as { exists?: boolean; duplicate?: boolean };
+    const result = await completeResponse.json() as UploadSuccess;
 
     fileProgresses.value[index] = 100;
 
@@ -623,21 +656,19 @@ const uploadFileMultipart = async (file: File, index: number, hash: string): Pro
 
     completedFiles.value++;
 
-    console.log(`Completed multipart upload for ${file.name}`);
     return result;
 
-  } catch (error: any) {
+  } catch (error) {
     console.error(`Multipart upload failed for ${file.name}:`, error);
     fileStatuses.value[index] = 'error';
 
     // 尝试中止分片上传
     try {
-      const errorData = error as any;
-      if (errorData.upload_id && errorData.key) {
+      if (uploadId && key) {
         await client.api.files.multipart.abort.$delete({
           query: {
-            upload_id: errorData.upload_id,
-            key: errorData.key,
+            upload_id: uploadId,
+            key,
           },
         });
       }
@@ -657,7 +688,6 @@ const uploadFiles = async () => {
   }
 
   isUploading.value = true;
-  uploadProgress.value = 0;
   uploadResults.value = [];
   completedFiles.value = 0;
 
@@ -668,6 +698,7 @@ const uploadFiles = async () => {
   });
 
   // 逐个上传文件
+  let authenticationInterrupted = false;
   for (let i = 0; i < selectedFiles.value.length; i++) {
     const file = selectedFiles.value[i];
     currentUploadingFile.value = file.name;
@@ -675,20 +706,30 @@ const uploadFiles = async () => {
     try {
       const result = await uploadSingleFile(file, i);
       uploadResults.value.push(result);
-    } catch (error: any) {
+    } catch (error) {
       console.error('Upload error:', error);
+      const uploadError = asError(error);
       uploadResults.value.push({
         error: t('upload.error'),
-        details: error.message,
+        details: uploadError.message,
         filename: file.name
       });
+      if (error instanceof UploadHttpError && (error.status === 401 || error.status === 503)) {
+        authenticationInterrupted = true;
+        if (error.status === 401) emit('authenticationRequired');
+        emit('showToast', uploadError.message);
+        break;
+      }
     }
 
-    uploadProgress.value = i + 1;
   }
 
   isUploading.value = false;
   currentUploadingFile.value = '';
+
+  if (authenticationInterrupted) {
+    return;
+  }
 
   // 上传完成后通知父组件
   emit('uploadComplete');
@@ -699,7 +740,7 @@ const uploadFiles = async () => {
   const uploadedCount = successCount - duplicateCount;
   const totalCount = selectedFiles.value.length;
 
-  let message = '';
+  let message: string;
   if (uploadedCount > 0 && duplicateCount > 0) {
     message = t('upload.completedWithDuplicates', { uploaded: uploadedCount, duplicates: duplicateCount });
   } else if (uploadedCount > 0) {
@@ -723,24 +764,18 @@ const uploadFiles = async () => {
 
 // 工具函数
 // 计算文件指纹
-const calculateFileHash = (file: File): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      try {
-        const buffer = e.target?.result as ArrayBuffer;
-        // 使用 SHA-256 作为文件指纹（浏览器原生支持）
-        const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
-        const hashArray = Array.from(new Uint8Array(hashBuffer));
-        const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-        resolve(hashHex);
-      } catch (error) {
-        reject(error);
-      }
-    };
-    reader.onerror = () => reject(new Error('Failed to read file'));
-    reader.readAsArrayBuffer(file);
-  });
+const calculateFileHash = async (file: File, onProgress: (progress: number) => void): Promise<string> => {
+  const hasher = await createSHA256();
+  hasher.init();
+  const hashChunkSize = 8 * 1024 * 1024;
+
+  for (let offset = 0; offset < file.size; offset += hashChunkSize) {
+    const chunk = file.slice(offset, Math.min(offset + hashChunkSize, file.size));
+    hasher.update(new Uint8Array(await chunk.arrayBuffer()));
+    onProgress(Math.min((offset + chunk.size) / file.size, 1));
+  }
+
+  return hasher.digest('hex');
 };
 
 const formatFileSize = (bytes: number): string => {

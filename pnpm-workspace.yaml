@@ -1,0 +1,7 @@
+minimumReleaseAgeExclude:
+  - '@cloudflare/workers-types@5.20260827.1'
+onlyBuiltDependencies:
+  - '@tailwindcss/oxide'
+  - esbuild
+  - sharp
+  - workerd

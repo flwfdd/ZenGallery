@@ -168,7 +168,7 @@ import {
   TransitionChild,
   TransitionRoot
 } from '@headlessui/vue';
-import { Copy, ExternalLink, Link, X } from 'lucide-vue-next';
+import { Copy, ExternalLink, Link, X } from '@lucide/vue';
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { FileMetadata } from '../../common/services';

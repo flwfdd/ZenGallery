@@ -1,5 +1,6 @@
 <template>
-    <div v-if="show" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50">
+    <div v-if="show" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50"
+        @click.self="handleCancel">
         <div
             class="bg-white dark:bg-slate-800 rounded-2xl border-2 border-slate-200 dark:border-slate-600 p-6 w-full max-w-md transform transition-all duration-200 scale-100">
             <div class="text-center mb-6">
@@ -34,7 +35,7 @@
 </template>
 
 <script setup lang="ts">
-import { Loader, Lock } from 'lucide-vue-next';
+import { Loader, Lock } from '@lucide/vue';
 import { nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 
@@ -70,12 +71,7 @@ const handleConfirm = () => {
 
     isValidating.value = true;
     errorMessage.value = '';
-
-    // 延迟一下以显示加载状态
-    setTimeout(() => {
-        emit('confirm', secretKey.value.trim());
-        isValidating.value = false;
-    }, 200);
+    emit('confirm', secretKey.value.trim());
 };
 
 const handleCancel = () => {

@@ -10,7 +10,8 @@
       <AppHeader :theme="theme" @setTheme="setTheme" />
 
       <!-- 文件上传区域 -->
-      <FileUpload @uploadComplete="handleUploadComplete" @showToast="showToastMessage" />
+      <FileUpload @uploadComplete="handleUploadComplete" @showToast="showToastMessage"
+        @authenticationRequired="requestAuthentication" />
 
       <!-- 文件列表区域 -->
       <FileList ref="fileListRef" @openDetails="openDetailsModal" @openEdit="openEditModal"
@@ -23,11 +24,13 @@
 
     <!-- 编辑模态框 -->
     <FileEditModal :show="showEditModal" :file="selectedFileForEdit" @close="closeEditModal"
-      @updated="handleFileUpdated" @showToast="showToastMessage" />
+      @updated="handleFileUpdated" @showToast="showToastMessage"
+      @authenticationRequired="requestAuthentication" />
 
     <!-- 删除确认模态框 -->
     <DeleteConfirmModal :show="showDeleteModal" :filename="fileToDelete" @close="closeDeleteModal"
-      @deleted="handleFileDeleted" @showToast="showToastMessage" />
+      @deleted="handleFileDeleted" @showToast="showToastMessage"
+      @authenticationRequired="requestAuthentication" />
 
     <!-- 消息提示 -->
     <ToastNotification :show="showToast" :message="toastMessage" @hide="hideToast" />
@@ -36,7 +39,6 @@
 
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue';
-import { useI18n } from 'vue-i18n';
 import type { FileMetadata } from '../common/services';
 import AppHeader from './components/AppHeader.vue';
 import DeleteConfirmModal from './components/DeleteConfirmModal.vue';
@@ -45,8 +47,6 @@ import FileEditModal from './components/FileEditModal.vue';
 import FileList from './components/FileList.vue';
 import FileUpload from './components/FileUpload.vue';
 import ToastNotification from './components/ToastNotification.vue';
-
-const { t } = useI18n();
 
 // Theme management
 const theme = ref<'light' | 'dark' | 'system'>('system');
@@ -152,8 +152,12 @@ const handleFileDeleted = () => {
 // 处理上传完成
 const handleUploadComplete = () => {
   if (fileListRef.value) {
-    fileListRef.value.loadFiles();
+    fileListRef.value.reloadFromStart();
   }
+};
+
+const requestAuthentication = () => {
+  fileListRef.value?.requestAuthentication();
 };
 
 // Toast 消息管理

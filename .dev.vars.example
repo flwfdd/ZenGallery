@@ -1,0 +1,2 @@
+# Copy this file to .dev.vars for local development.
+SECRET_KEY=replace-with-a-long-random-secret

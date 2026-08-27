@@ -64,7 +64,7 @@ import {
   TransitionRoot
 } from '@headlessui/vue';
 import { hc } from 'hono/client';
-import { AlertTriangle, Loader2, Trash2 } from 'lucide-vue-next';
+import { AlertTriangle, Loader2, Trash2 } from '@lucide/vue';
 import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppType } from '../../api/index';
@@ -81,6 +81,7 @@ const emit = defineEmits<{
   close: [];
   deleted: [];
   showToast: [message: string];
+  authenticationRequired: [];
 }>();
 
 const isDeleting = ref(false);
@@ -102,8 +103,11 @@ const deleteFile = async () => {
       emit('showToast', t('fileList.deleteSuccess'));
       emit('close');
     } else {
+      if (response.status === 401) {
+        emit('authenticationRequired');
+      }
       const errorData = await response.json();
-      emit('showToast', `${t('errors.loadFailed')}: ${(errorData as any).error || t('errors.serverError')}`);
+      emit('showToast', `${t('errors.loadFailed')}: ${'error' in errorData ? errorData.error : t('errors.serverError')}`);
     }
   } catch (error) {
     console.error('Error deleting file:', error);

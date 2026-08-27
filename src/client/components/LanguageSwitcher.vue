@@ -39,7 +39,7 @@
 
 <script setup lang="ts">
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/vue'
-import { CheckCircle, ChevronDown, Globe } from 'lucide-vue-next'
+import { CheckCircle, ChevronDown, Globe } from '@lucide/vue'
 import { computed } from 'vue'
 import { getCurrentLanguage, supportedLocales, switchLanguage } from '../../i18n'
 
