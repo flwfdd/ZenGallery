@@ -6,7 +6,6 @@
     "directory": "./dist"
   },
   "compatibility_date": "2025-05-08",
-  "keep_vars": true,
   "routes": [
     {
       "pattern": "gallery.0u0.fun",
