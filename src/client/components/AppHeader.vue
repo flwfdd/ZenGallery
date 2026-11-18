@@ -1,5 +1,5 @@
 <template>
-  <header class="mb-4 sm:mb-6">
+  <header class="mb-4 sm:mb-6 relative z-40">
     <div
       class="bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-600 rounded-2xl sm:rounded-3xl p-4 sm:p-8 relative transform hover:scale-[1.02] transition-all duration-200 group shadow-[3px_3px_0px_0px_rgba(6,182,212,0.15)]">
       <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 sm:gap-0">
