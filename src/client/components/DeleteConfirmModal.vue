@@ -68,6 +68,7 @@ import { AlertTriangle, Loader2, Trash2 } from '@lucide/vue';
 import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppType } from '../../api/index';
+import { responseError } from '../utils/http';
 
 const { t } = useI18n();
 const client = hc<AppType>('/');
@@ -106,8 +107,8 @@ const deleteFile = async () => {
       if (response.status === 401) {
         emit('authenticationRequired');
       }
-      const errorData = await response.json();
-      emit('showToast', `${t('errors.loadFailed')}: ${'error' in errorData ? errorData.error : t('errors.serverError')}`);
+      const message = await responseError(response, t('errors.serverError'));
+      emit('showToast', `${t('errors.loadFailed')}: ${message}`);
     }
   } catch (error) {
     console.error('Error deleting file:', error);

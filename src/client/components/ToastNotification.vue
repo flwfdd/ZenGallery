@@ -1,6 +1,6 @@
 <template>
   <TransitionRoot as="template" :show="show">
-    <div class="fixed bottom-4 sm:bottom-6 left-4 right-4 sm:left-auto sm:right-6 z-[100] sm:w-auto">
+    <div class="fixed bottom-4 sm:bottom-6 left-4 right-4 sm:left-auto sm:right-6 z-[100] sm:w-auto" role="status" aria-live="polite">
       <TransitionChild as="template" enter="transform ease-out duration-300 transition"
         enter-from="translate-y-10 opacity-0 scale-90" enter-to="translate-y-0 opacity-100 scale-100"
         leave="transform ease-in duration-200 transition" leave-from="opacity-100 scale-100"
@@ -23,7 +23,7 @@
 <script setup lang="ts">
 import { TransitionChild, TransitionRoot } from '@headlessui/vue';
 import { CheckCircle } from '@lucide/vue';
-import { ref, watch } from 'vue';
+import { onUnmounted, ref, watch } from 'vue';
 
 const props = defineProps<{
   show: boolean;
@@ -36,15 +36,20 @@ const emit = defineEmits<{
   hide: [];
 }>();
 
-watch(() => props.show, (newShow) => {
+watch([() => props.show, () => props.message], ([newShow]) => {
+  if (toastTimeout.value) {
+    clearTimeout(toastTimeout.value);
+    toastTimeout.value = null;
+  }
   if (newShow) {
-    if (toastTimeout.value) {
-      clearTimeout(toastTimeout.value);
-    }
     toastTimeout.value = setTimeout(() => {
       emit('hide');
       toastTimeout.value = null;
     }, 3000);
   }
+});
+
+onUnmounted(() => {
+  if (toastTimeout.value) clearTimeout(toastTimeout.value);
 });
 </script>

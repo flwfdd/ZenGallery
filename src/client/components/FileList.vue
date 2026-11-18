@@ -27,12 +27,12 @@
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
           <!-- 搜索框 -->
           <div class="sm:col-span-2 lg:col-span-1">
-            <label class="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2 sm:mb-3">{{
+            <label for="file-search" class="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2 sm:mb-3">{{
               t('fileList.search') }}</label>
             <div class="relative group focus-within:scale-[1.02] transition-all duration-150">
               <Search
                 class="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-slate-500 group-focus-within:text-cyan-500 dark:group-focus-within:text-cyan-400 transition-colors duration-200" />
-              <input v-model="searchQuery" @input="debouncedSearch" type="text"
+              <input id="file-search" v-model="searchQuery" @input="debouncedSearch" type="text"
                 :placeholder="t('fileList.searchPlaceholder')"
                 class="w-full pl-10 pr-4 py-3 border-2 border-slate-200 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-200 placeholder-slate-500 dark:placeholder-slate-400 focus:border-cyan-300 dark:focus:border-cyan-500 focus:outline-none transition-all duration-150 hover:border-slate-300 dark:hover:border-slate-500 shadow-[1px_1px_0px_0px_rgba(148,163,184,0.1)] text-sm sm:text-base" />
             </div>
@@ -171,6 +171,15 @@
           <p class="text-base sm:text-lg font-medium text-slate-800 dark:text-slate-200">{{ t('common.loading') }}</p>
         </div>
 
+        <div v-else-if="loadError" class="text-center py-12 sm:py-20" role="alert">
+          <XCircle class="w-12 h-12 text-red-500 mx-auto mb-4" />
+          <p class="text-base font-medium text-red-600 dark:text-red-400">{{ loadError }}</p>
+          <button @click="loadFiles"
+            class="mt-4 px-4 py-2 text-sm font-semibold text-cyan-700 dark:text-cyan-300 hover:underline">
+            {{ t('common.refresh') }}
+          </button>
+        </div>
+
         <div v-else-if="fileList.length === 0" class="text-center py-12 sm:py-20">
           <div
             class="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 bg-slate-200 dark:bg-slate-600 rounded-2xl mb-4 sm:mb-6 transform -rotate-3">
@@ -209,7 +218,7 @@
                     {{ file.description }}
                   </p>
                   <p class="text-slate-600 dark:text-slate-400 text-xs sm:text-sm">
-                    {{ formatFileSize(file.size) }} • {{ formatDate(file.uploaded_at) }}
+                    {{ formatFileSize(file.size) }} • {{ formatDate(file.uploaded_at, t('common.dateLocale')) }}
                   </p>
                 </div>
               </div>
@@ -218,14 +227,17 @@
               <div
                 class="flex flex-row items-center justify-center sm:justify-end gap-2 opacity-60 group-hover:opacity-100 transition-opacity duration-200 flex-shrink-0">
                 <button @click="$emit('openDetails', file)"
+                  :aria-label="`${t('fileList.fileInfo')}: ${file.title || file.filename}`"
                   class="w-9 h-9 sm:w-10 sm:h-10 bg-blue-200 dark:bg-blue-600/50 hover:bg-blue-300 dark:hover:bg-blue-500 text-blue-700 dark:text-blue-300 rounded-lg sm:rounded-xl border-2 border-blue-300 dark:border-blue-500 transition-all duration-150 flex items-center justify-center hover:scale-110 active:scale-95 cursor-pointer hover:rotate-3 shadow-[1px_1px_0px_0px_rgba(59,130,246,0.2)]">
                   <Eye class="w-4 h-4 sm:w-5 sm:h-5" />
                 </button>
                 <button @click="$emit('openEdit', file)"
+                  :aria-label="`${t('fileInfo.editTitle')}: ${file.title || file.filename}`"
                   class="w-9 h-9 sm:w-10 sm:h-10 bg-amber-200 dark:bg-amber-600/50 hover:bg-amber-300 dark:hover:bg-amber-500 text-amber-700 dark:text-amber-300 rounded-lg sm:rounded-xl border-2 border-amber-300 dark:border-amber-500 transition-all duration-150 flex items-center justify-center hover:scale-110 active:scale-95 cursor-pointer hover:-rotate-3 shadow-[1px_1px_0px_0px_rgba(245,158,11,0.2)]">
                   <Edit class="w-4 h-4 sm:w-5 sm:h-5" />
                 </button>
                 <button @click="$emit('confirmDelete', file.filename)"
+                  :aria-label="`${t('deleteModal.title')}: ${file.title || file.filename}`"
                   class="w-9 h-9 sm:w-10 sm:h-10 bg-red-200 dark:bg-red-600/50 hover:bg-red-300 dark:hover:bg-red-500 text-red-700 dark:text-red-300 rounded-lg sm:rounded-xl border-2 border-red-300 dark:border-red-500 transition-all duration-150 flex items-center justify-center hover:scale-110 active:scale-95 cursor-pointer hover:rotate-3 shadow-[1px_1px_0px_0px_rgba(239,68,68,0.2)]">
                   <Trash2 class="w-4 h-4 sm:w-5 sm:h-5" />
                 </button>
@@ -273,6 +285,7 @@ import { hc } from 'hono/client';
 import {
   Check,
   ChevronsUpDown,
+  XCircle,
   Edit,
   Eye,
   FolderOpen,
@@ -285,6 +298,8 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppType } from '../../api/index';
 import type { FileMetadata, ListFilesOptions } from '../../common/services';
+import { formatDate, formatFileSize } from '../utils/format';
+import { responseError } from '../utils/http';
 import FileIcon from './FileIcon.vue';
 import SecretKeyModal from './SecretKeyModal.vue';
 
@@ -300,6 +315,7 @@ defineEmits<{
 // 文件列表相关状态
 const fileList = ref<FileMetadata[]>([]);
 const isLoadingFiles = ref(false);
+const loadError = ref('');
 const searchQuery = ref('');
 const selectedMimeType = ref('');
 const sortBy = ref<ListFilesOptions['sort_by']>('uploaded_at');
@@ -308,11 +324,6 @@ const currentOffset = ref(0);
 const currentLimit = ref(20);
 const totalFiles = ref<number | null>(null);
 let latestRequestId = 0;
-
-interface FilesResponse {
-  files: FileMetadata[];
-  count: number;
-}
 
 // 权限相关状态
 const showSecretKeyModal = ref(false);
@@ -350,6 +361,7 @@ const sortOrderOptions = computed(() => [
 const loadFiles = async () => {
   const requestId = ++latestRequestId;
   isLoadingFiles.value = true;
+  loadError.value = '';
   try {
     const options: Record<string, string> = {
       limit: currentLimit.value.toString(),
@@ -367,30 +379,33 @@ const loadFiles = async () => {
     }
 
     const response = await client.api.files.$get({ query: options });
+    if (requestId !== latestRequestId) return;
 
-    // 处理401权限错误
     if (response.status === 401) {
       showSecretKeyModal.value = true;
       return;
     }
 
-    if (response.ok) {
-      const data = await response.json() as FilesResponse;
-      if (requestId !== latestRequestId) return;
-      fileList.value = data.files;
-      totalFiles.value = data.count;
-    } else {
-      const data = await response.json();
-      console.error('Failed to load files:', data);
+    if (!response.ok) {
+      const message = response.status === 503
+        ? t('auth.notConfigured')
+        : await responseError(response, t('errors.serverError'));
       if (requestId !== latestRequestId) return;
       fileList.value = [];
       totalFiles.value = 0;
+      loadError.value = `${t('errors.loadFailed')}: ${message}`;
+      return;
     }
+
+    const data = await response.json();
+    fileList.value = data.files;
+    totalFiles.value = data.count;
   } catch (error) {
     console.error('Error loading files:', error);
     if (requestId !== latestRequestId) return;
     fileList.value = [];
     totalFiles.value = 0;
+    loadError.value = t('errors.networkError');
   } finally {
     if (requestId === latestRequestId) {
       isLoadingFiles.value = false;
@@ -457,27 +472,6 @@ const resetPageAndLoad = () => {
 };
 
 watch([selectedMimeType, sortBy, sortOrder], resetPageAndLoad);
-
-// 工具函数
-const formatFileSize = (bytes: number): string => {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-};
-
-const formatDate = (dateString: string): string => {
-  const date = new Date(dateString);
-  const locale = t('common.dateLocale') || 'zh-CN';
-  return date.toLocaleString(locale, {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
-  });
-};
 
 // 公开方法供父组件调用
 defineExpose({

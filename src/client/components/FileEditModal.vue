@@ -23,7 +23,7 @@
                     class="absolute -bottom-1 left-0 right-0 h-1 bg-amber-300 dark:bg-amber-400/60 opacity-60 transform -rotate-0.5">
                   </div>
                 </DialogTitle>
-                <button @click="$emit('close')"
+                <button @click="$emit('close')" :aria-label="t('common.close')"
                   class="w-8 h-8 sm:w-10 sm:h-10 bg-slate-200 dark:bg-slate-600 hover:bg-slate-300 dark:hover:bg-slate-500 text-slate-600 dark:text-slate-300 rounded-lg sm:rounded-xl border-2 border-slate-300 dark:border-slate-600 transition-all duration-150 flex items-center justify-center hover:scale-110 active:scale-95 hover:rotate-90 cursor-pointer">
                   <X class="w-5 h-5 sm:w-6 sm:h-6" />
                 </button>
@@ -31,16 +31,16 @@
 
               <form @submit.prevent="saveFileInfo" class="space-y-4 sm:space-y-6">
                 <div class="space-y-2 sm:space-y-3">
-                  <label class="block text-sm font-bold text-slate-800 dark:text-slate-200">{{
+                  <label for="edit-title" class="block text-sm font-bold text-slate-800 dark:text-slate-200">{{
                     t('fileInfo.title')
                   }}</label>
-                  <input v-model="editForm.title" type="text" :placeholder="t('fileInfo.titlePlaceholder')"
+                  <input id="edit-title" v-model="editForm.title" type="text" :placeholder="t('fileInfo.titlePlaceholder')"
                     class="w-full rounded-lg sm:rounded-xl border-2 border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 sm:px-4 py-2 sm:py-3 text-sm sm:text-base text-slate-800 dark:text-slate-200 placeholder-slate-500 dark:placeholder-slate-400 focus:border-cyan-300 dark:focus:border-cyan-500 focus:outline-none transition-all duration-150 hover:border-slate-300 dark:hover:border-slate-500 focus:scale-[1.02]" />
                 </div>
                 <div class="space-y-2 sm:space-y-3">
-                  <label class="block text-sm font-bold text-slate-800 dark:text-slate-200">{{
+                  <label for="edit-description" class="block text-sm font-bold text-slate-800 dark:text-slate-200">{{
                     t('fileInfo.description') }}</label>
-                  <textarea v-model="editForm.description" rows="4" :placeholder="t('fileInfo.descriptionPlaceholder')"
+                  <textarea id="edit-description" v-model="editForm.description" rows="4" :placeholder="t('fileInfo.descriptionPlaceholder')"
                     class="w-full rounded-lg sm:rounded-xl border-2 border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 sm:px-4 py-2 sm:py-3 text-sm sm:text-base text-slate-800 dark:text-slate-200 placeholder-slate-500 dark:placeholder-slate-400 focus:border-cyan-300 dark:focus:border-cyan-500 focus:outline-none resize-none transition-all duration-150 hover:border-slate-300 dark:hover:border-slate-500 focus:scale-[1.02]"></textarea>
                 </div>
                 <div class="flex flex-col sm:flex-row gap-3 pt-2 sm:pt-4">
@@ -77,6 +77,7 @@ import { reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppType } from '../../api/index';
 import type { FileMetadata } from '../../common/services';
+import { responseError } from '../utils/http';
 
 const { t } = useI18n();
 const client = hc<AppType>('/');
@@ -102,8 +103,8 @@ const editForm = reactive({
 const isSaving = ref(false);
 
 // 监听文件变化，更新表单
-watch(() => props.file, (newFile) => {
-  if (newFile) {
+watch([() => props.file, () => props.show], ([newFile, newShow]) => {
+  if (newFile && newShow) {
     editForm.title = newFile.title || '';
     editForm.description = newFile.description || '';
   }
@@ -134,8 +135,8 @@ const saveFileInfo = async () => {
       if (response.status === 401) {
         emit('authenticationRequired');
       }
-      const errorData = await response.json();
-      emit('showToast', `${t('errors.loadFailed')}: ${'error' in errorData ? errorData.error : t('errors.serverError')}`);
+      const message = await responseError(response, t('errors.serverError'));
+      emit('showToast', `${t('errors.loadFailed')}: ${message}`);
     }
   } catch (error) {
     console.error('Error updating file info:', error);

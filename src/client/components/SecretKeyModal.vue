@@ -15,7 +15,8 @@
 
             <div class="space-y-4">
                 <div>
-                    <input ref="inputRef" v-model="secretKey" type="password" :placeholder="t('auth.enterSecretKey')"
+                    <label for="secret-key" class="sr-only">{{ t('auth.enterSecretKey') }}</label>
+                    <input id="secret-key" ref="inputRef" v-model="secretKey" type="password" autocomplete="current-password" :placeholder="t('auth.enterSecretKey')"
                         class="w-full px-4 py-3 border-2 border-slate-200 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-200 placeholder-slate-500 dark:placeholder-slate-400 focus:border-amber-300 dark:focus:border-amber-500 focus:outline-none transition-all duration-150"
                         @keyup.enter="handleConfirm" />
                 </div>

@@ -23,7 +23,7 @@
                     class="absolute -bottom-1 left-0 right-0 h-1 bg-blue-300 dark:bg-blue-400/60 opacity-60 transform rotate-0.5">
                   </div>
                 </DialogTitle>
-                <button @click="$emit('close')"
+                <button @click="$emit('close')" :aria-label="t('common.close')"
                   class="w-8 h-8 sm:w-10 sm:h-10 bg-slate-200 dark:bg-slate-600 hover:bg-slate-300 dark:hover:bg-slate-500 text-slate-600 dark:text-slate-300 rounded-lg sm:rounded-xl border-2 border-slate-300 dark:border-slate-600 transition-all duration-150 flex items-center justify-center hover:scale-110 active:scale-95 hover:rotate-90 cursor-pointer">
                   <X class="w-5 h-5 sm:w-6 sm:h-6" />
                 </button>
@@ -40,26 +40,29 @@
                 </div>
                 <div v-else-if="file.mime_type.startsWith('video/')" class="text-center">
                   <video :src="`/files/${file.filename}`"
-                    class=" rounded-xl sm:rounded-2xlmax-w-full mx-auto max-h-60 sm:max-h-80 object-contain" controls />
+                    class="rounded-xl sm:rounded-2xl max-w-full mx-auto max-h-60 sm:max-h-80 object-contain" controls />
+                </div>
+                <div v-else-if="file.mime_type.startsWith('audio/')">
+                  <audio :src="`/files/${file.filename}`" class="w-full" controls />
                 </div>
 
                 <!-- 基本信息 -->
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
                   <div class="space-y-2">
-                    <label class="text-sm font-bold text-slate-800 dark:text-slate-200">{{
+                    <label for="detail-filename" class="text-sm font-bold text-slate-800 dark:text-slate-200">{{
                       t('fileList.fileName')
                       }}</label>
                     <div>
-                      <input readonly :value="file.filename"
+                      <input id="detail-filename" readonly :value="file.filename"
                         class="w-full rounded-lg sm:rounded-xl border-2 border-slate-200 dark:border-slate-600 focus:outline-none focus:border-cyan-300 dark:focus:border-cyan-500 bg-slate-50 dark:bg-slate-700 px-3 sm:px-4 py-2 sm:py-3 text-xs sm:text-sm font-mono text-slate-800 dark:text-slate-200" />
                     </div>
                   </div>
                   <div class="space-y-2">
-                    <label class="text-sm font-bold text-slate-800 dark:text-slate-200">{{
+                    <label for="detail-mime-type" class="text-sm font-bold text-slate-800 dark:text-slate-200">{{
                       t('fileList.mimeType')
                       }}</label>
                     <div>
-                      <input readonly :value="file.mime_type"
+                      <input id="detail-mime-type" readonly :value="file.mime_type"
                         class="w-full rounded-lg sm:rounded-xl border-2 border-slate-200 dark:border-slate-600 focus:outline-none focus:border-cyan-300 dark:focus:border-cyan-500 bg-slate-50 dark:bg-slate-700 px-3 sm:px-4 py-2 sm:py-3 text-xs sm:text-sm font-mono text-slate-800 dark:text-slate-200" />
                     </div>
                   </div>
@@ -76,7 +79,7 @@
                       t('fileList.uploadTime')
                       }}</label>
                     <p class="text-slate-700 dark:text-slate-300 px-3 sm:px-4 py-2 sm:py-3 text-sm">
-                      {{ formatDate(file.uploaded_at) }}
+                      {{ formatDate(file.uploaded_at, t('common.dateLocale')) }}
                     </p>
                   </div>
                   <div v-if="file.title" class="lg:col-span-2 space-y-2">
@@ -110,10 +113,10 @@
                   <div class="space-y-3 sm:space-y-4">
                     <!-- 原始文件 -->
                     <div class="space-y-2">
-                      <label class="text-sm font-bold text-slate-800 dark:text-slate-200">{{
+                      <label for="original-file-link" class="text-sm font-bold text-slate-800 dark:text-slate-200">{{
                         t('fileList.originalFile') }}</label>
                       <div class="flex flex-col sm:flex-row gap-2 sm:gap-3">
-                        <input readonly :value="`${currentOrigin}/files/${file.filename}`"
+                        <input id="original-file-link" readonly :value="`${currentOrigin}/files/${file.filename}`"
                           class="flex-1 rounded-lg sm:rounded-xl border-2 border-slate-200 dark:border-slate-600 focus:outline-none focus:border-cyan-300 dark:focus:border-cyan-500 bg-slate-50 dark:bg-slate-700 px-3 sm:px-4 py-2 sm:py-3 text-xs sm:text-sm font-mono text-slate-800 dark:text-slate-200" />
                         <div class="flex gap-2 sm:gap-3">
                           <button @click="openInNewTab(`${currentOrigin}/files/${file.filename}`)"
@@ -135,10 +138,10 @@
                     <!-- 压缩版本 -->
                     <div v-if="file.mime_type.startsWith('image/')" class="space-y-3 sm:space-y-4">
                       <div v-for="(level, label) in compressionLevels" :key="level" class="space-y-2">
-                        <label class="text-sm font-bold text-slate-800 dark:text-slate-200">{{
+                        <label :for="`compression-${level}`" class="text-sm font-bold text-slate-800 dark:text-slate-200">{{
                           label }}</label>
                         <div class="flex flex-col sm:flex-row gap-2 sm:gap-3">
-                          <input readonly :value="`${currentOrigin}/files/${file.filename}?level=${level}`"
+                          <input :id="`compression-${level}`" readonly :value="`${currentOrigin}/files/${file.filename}?level=${level}`"
                             class="flex-1 rounded-lg sm:rounded-xl border-2 border-slate-200 dark:border-slate-600 focus:outline-none focus:border-cyan-300 dark:focus:border-cyan-500 bg-slate-50 dark:bg-slate-700 px-3 sm:px-4 py-2 sm:py-3 text-xs sm:text-sm font-mono text-slate-800 dark:text-slate-200" />
                           <button
                             @click="copyToClipboard(`${currentOrigin}/files/${file.filename}?level=${level}`, `${label} ${t('fileList.link')}`)"
@@ -172,6 +175,7 @@ import { Copy, ExternalLink, Link, X } from '@lucide/vue';
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { FileMetadata } from '../../common/services';
+import { formatDate, formatFileSize } from '../utils/format';
 
 const { t } = useI18n();
 
@@ -185,40 +189,13 @@ const emit = defineEmits<{
   showToast: [message: string];
 }>();
 
-// 计算属性
-const currentOrigin = computed(() => {
-  if (typeof window !== 'undefined') {
-    return window.location.origin;
-  }
-  return '';
-});
+const currentOrigin = window.location.origin;
 
 const compressionLevels = computed(() => ({
   [t('fileList.lowQuality')]: 'low',
   [t('fileList.midQuality')]: 'mid',
   [t('fileList.highQuality')]: 'high'
 }));
-
-// 工具函数
-const formatFileSize = (bytes: number): string => {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-};
-
-const formatDate = (dateString: string): string => {
-  const date = new Date(dateString);
-  const locale = t('common.dateLocale') || 'zh-CN';
-  return date.toLocaleString(locale, {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
-  });
-};
 
 // 操作函数
 const openInNewTab = (url: string) => {

@@ -4,29 +4,28 @@ import zh from './locales/zh.json'
 
 type Locale = 'zh' | 'en'
 
-// 从localStorage获取用户偏好语言，默认为中文
+// 优先使用保存的语言，其次使用浏览器语言
 const getStoredLanguage = (): Locale => {
     const stored = localStorage.getItem('preferred-language')
     if (stored === 'zh' || stored === 'en') {
         return stored
     }
-    // 检查浏览器语言偏好
-    const browserLang = navigator.language.toLowerCase()
-    if (browserLang.startsWith('zh')) {
-        return 'zh'
-    }
-    return 'zh' // 默认中文
+    return navigator.language.toLowerCase().startsWith('zh') ? 'zh' : 'en'
 }
+
+const initialLocale = getStoredLanguage()
 
 export const i18n = createI18n({
     legacy: false, // 使用 Composition API 模式
-    locale: getStoredLanguage(),
+    locale: initialLocale,
     fallbackLocale: 'zh',
     messages: {
         zh,
         en
     }
 })
+
+document.documentElement.lang = initialLocale
 
 export const supportedLocales = [
     { code: 'zh', name: '中文', nativeName: '中文' },

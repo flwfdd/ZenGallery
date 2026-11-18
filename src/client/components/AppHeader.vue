@@ -28,17 +28,17 @@
           <div
             class="bg-slate-50 dark:bg-slate-700 border-2 border-slate-200 dark:border-slate-600 rounded-xl sm:rounded-2xl p-1 shadow-[2px_2px_0px_0px_rgba(148,163,184,0.2)]">
             <div class="flex gap-1">
-              <button @click="$emit('setTheme', 'light')" :title="t('theme.light')"
+              <button @click="$emit('setTheme', 'light')" :title="t('theme.light')" :aria-label="t('theme.light')"
                 :class="theme === 'light' ? 'bg-yellow-200 text-slate-800' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'"
                 class="w-9 h-9 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl transition-all duration-150 flex items-center justify-center hover:scale-110 active:scale-95 cursor-pointer">
                 <Sun class="w-4 h-4 transition-transform hover:rotate-12" />
               </button>
-              <button @click="$emit('setTheme', 'dark')" :title="t('theme.dark')"
+              <button @click="$emit('setTheme', 'dark')" :title="t('theme.dark')" :aria-label="t('theme.dark')"
                 :class="theme === 'dark' ? 'bg-cyan-700 text-white' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'"
                 class="w-9 h-9 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl transition-all duration-150 flex items-center justify-center hover:scale-110 active:scale-95 cursor-pointer">
                 <Moon class="w-4 h-4 transition-transform hover:-rotate-12" />
               </button>
-              <button @click="$emit('setTheme', 'system')" :title="t('theme.system')"
+              <button @click="$emit('setTheme', 'system')" :title="t('theme.system')" :aria-label="t('theme.system')"
                 :class="theme === 'system' ? 'bg-yellow-200 dark:bg-cyan-700 text-slate-800 dark:text-white' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'"
                 class="w-9 h-9 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl transition-all duration-150 flex items-center justify-center hover:scale-110 active:scale-95 cursor-pointer">
                 <SunMoon class="w-4 h-4 transition-transform hover:scale-110" />
