@@ -298,7 +298,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppType } from '../../api/index';
 import type { FileMetadata, ListFilesOptions } from '../../common/services';
-import { formatDate, formatFileSize } from '../utils/format';
+import { formatDate, formatFileSize } from '../../common/format';
 import { responseError } from '../utils/http';
 import FileIcon from './FileIcon.vue';
 import SecretKeyModal from './SecretKeyModal.vue';

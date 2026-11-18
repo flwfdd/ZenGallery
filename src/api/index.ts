@@ -12,6 +12,7 @@ import { ImageCompressionLevelSchema, ListFilesOptionsSchema } from '../common/s
 import { isHashMismatchError, storedObjectMatchesHash } from './hash';
 import { parseRangeHeader } from './range';
 import { CloudflareD1Service, CloudflareImageService, CloudflareR2Service } from './services/cloudflare';
+import { renderSharePage } from './share';
 
 export interface Bindings {
   BUCKET: R2Bucket;
@@ -475,6 +476,25 @@ export const route = app
       }
     },
   )
+  .get('/share/:filename', async (c) => {
+    const { filename } = c.req.param();
+    const db = new CloudflareD1Service(c.env.DB);
+    try {
+      const fileRecord = await db.getFile(filename);
+      if (!fileRecord) {
+        return c.json({ error: 'File not found' }, 404);
+      }
+      if (!fileRecord.mime_type.startsWith('image/')) {
+        return c.redirect(`/files/${filename}`, 302);
+      }
+
+      c.header('Cache-Control', 'public, max-age=60');
+      return c.html(renderSharePage(fileRecord, new URL(c.req.url).origin));
+    } catch (error) {
+      console.error(`Error rendering share page ${filename}:`, error);
+      return c.json({ error: 'Failed to render share page' }, 500);
+    }
+  })
   .get('/files/:filename', async (c) => {
     const { filename } = c.req.param();
     const level = c.req.query('level') as ImageCompressionLevel | undefined;

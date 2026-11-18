@@ -2,6 +2,16 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+.file-details {
+  container-type: inline-size;
+}
+
+@container (min-width: 900px) {
+  .file-details-layout {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .upload-progress {
   --progress-fill: linear-gradient(to right, #22d3ee, #0891b2);
   appearance: none;

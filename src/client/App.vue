@@ -5,15 +5,17 @@
       style="background-image: radial-gradient(circle at 2px 2px, rgba(156,163,175,0.3) 2px, transparent 0); background-size: 20px 20px;">
     </div>
 
-    <main class="relative max-w-6xl mx-auto px-3 sm:px-6 py-4 sm:py-8">
-      <!-- 应用头部 -->
+    <div class="relative max-w-6xl mx-auto px-3 sm:px-6 pt-4 sm:pt-8">
       <AppHeader :theme="theme" @setTheme="setTheme" />
+    </div>
 
-      <!-- 文件上传区域 -->
+    <main v-if="shareFile" class="relative max-w-6xl mx-auto px-3 sm:px-6 pb-4 sm:pb-8">
+      <SharePage :file="shareFile" @showToast="showToastMessage" />
+    </main>
+
+    <main v-else class="relative max-w-6xl mx-auto px-3 sm:px-6 pb-4 sm:pb-8">
       <FileUpload @uploadComplete="handleUploadComplete" @showToast="showToastMessage"
         @authenticationRequired="requestAuthentication" />
-
-      <!-- 文件列表区域 -->
       <FileList ref="fileListRef" @openDetails="openDetailsModal" @openEdit="openEditModal"
         @confirmDelete="confirmDeleteFile" />
     </main>
@@ -46,7 +48,16 @@ import FileDetailsModal from './components/FileDetailsModal.vue';
 import FileEditModal from './components/FileEditModal.vue';
 import FileList from './components/FileList.vue';
 import FileUpload from './components/FileUpload.vue';
+import SharePage from './components/SharePage.vue';
 import ToastNotification from './components/ToastNotification.vue';
+
+declare global {
+  interface Window {
+    __ZEN_GALLERY_SHARE__?: FileMetadata;
+  }
+}
+
+const shareFile = window.__ZEN_GALLERY_SHARE__ ?? null;
 
 // Theme management
 const theme = ref<'light' | 'dark' | 'system'>('system');

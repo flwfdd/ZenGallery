@@ -166,7 +166,7 @@ import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppType } from '../../api/index';
 import { MAX_SINGLE_UPLOAD_SIZE, MAX_UPLOAD_SIZE, MULTIPART_CHUNK_SIZE } from '../../common/files';
-import { formatFileSize } from '../utils/format';
+import { formatFileSize } from '../../common/format';
 import { responseError, xhrErrorMessage } from '../utils/http';
 
 const { t } = useI18n();

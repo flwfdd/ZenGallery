@@ -105,6 +105,33 @@ describe('management authentication', () => {
   });
 });
 
+describe('share pages', () => {
+  it('renders an image without requiring authentication', async () => {
+    const imageFile: FileMetadata = {
+      ...databaseFile,
+      filename: `${'a'.repeat(64)}.jpeg`,
+      mime_type: 'image/jpeg',
+    };
+    const { bindings } = createBindings({ databaseRecord: imageFile });
+    const response = await app.request(`/share/${imageFile.filename}`, {}, bindings);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain('http://localhost/files/' + imageFile.filename + '?level=mid');
+  });
+
+  it('redirects non-image files to the original file', async () => {
+    const { bindings } = createBindings({ databaseRecord: databaseFile });
+    const response = await app.request(`/share/${databaseFile.filename}`, {}, bindings);
+    expect(response.status).toBe(302);
+    expect(response.headers.get('Location')).toBe(`/files/${databaseFile.filename}`);
+  });
+
+  it('returns 404 for an unknown file', async () => {
+    const { bindings } = createBindings();
+    const response = await app.request(`/share/${'b'.repeat(64)}.jpeg`, {}, bindings);
+    expect(response.status).toBe(404);
+  });
+});
+
 describe('file existence checks', () => {
   const checkFile = (bindings: Bindings) => app.request('/api/files/check', {
     method: 'POST',
