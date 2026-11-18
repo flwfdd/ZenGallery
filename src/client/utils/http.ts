@@ -1,3 +1,24 @@
+import { hc } from 'hono/client';
+
+import type { AppType } from '../../api/index';
+
+let secretKey = '';
+
+export const setSecretKey = (value: string): void => {
+  secretKey = value;
+};
+
+export const authorizationHeader = (): string | undefined => (
+  secretKey ? `Bearer ${secretKey}` : undefined
+);
+
+export const apiClient = hc<AppType>('/', {
+  headers: (): Record<string, string> => {
+    const authorization = authorizationHeader();
+    return authorization ? { Authorization: authorization } : {};
+  },
+});
+
 interface ErrorResponse {
   clone(): { json(): Promise<unknown> };
 }

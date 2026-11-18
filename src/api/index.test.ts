@@ -91,17 +91,26 @@ describe('management authentication', () => {
     expect(response.status).toBe(503);
   });
 
-  it('sets an HttpOnly, strict same-site cookie after login', async () => {
+  it('accepts Bearer credentials without setting a cookie', async () => {
     const { bindings } = createBindings({ secret: SECRET_KEY });
     const response = await app.request('/api/auth/login', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ secret_key: SECRET_KEY }),
+      headers: { Authorization: `Bearer ${SECRET_KEY}` },
     }, bindings);
 
     expect(response.status).toBe(200);
-    expect(response.headers.get('Set-Cookie')).toContain('HttpOnly');
-    expect(response.headers.get('Set-Cookie')).toContain('SameSite=Strict');
+    expect(response.headers.get('Set-Cookie')).toBeNull();
+  });
+
+  it('rejects invalid Bearer credentials with a challenge', async () => {
+    const { bindings } = createBindings({ secret: SECRET_KEY });
+    const response = await app.request('/api/auth/login', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer wrong' },
+    }, bindings);
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get('WWW-Authenticate')).toBe('Bearer realm="ZenGallery"');
   });
 });
 
@@ -132,12 +141,31 @@ describe('share pages', () => {
   });
 });
 
+describe('file metadata', () => {
+  it('returns a single file record', async () => {
+    const { bindings } = createBindings({ secret: SECRET_KEY, databaseRecord: databaseFile });
+    const response = await app.request(`/api/files/${databaseFile.filename}`, {
+      headers: { Authorization: `Bearer ${SECRET_KEY}` },
+    }, bindings);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ filename: databaseFile.filename });
+  });
+
+  it('returns 404 for unknown metadata', async () => {
+    const { bindings } = createBindings({ secret: SECRET_KEY });
+    const response = await app.request(`/api/files/${databaseFile.filename}`, {
+      headers: { Authorization: `Bearer ${SECRET_KEY}` },
+    }, bindings);
+    expect(response.status).toBe(404);
+  });
+});
+
 describe('file existence checks', () => {
   const checkFile = (bindings: Bindings) => app.request('/api/files/check', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Cookie: `secret-key=${SECRET_KEY}`,
+      Authorization: `Bearer ${SECRET_KEY}`,
     },
     body: JSON.stringify({
       filename: 'hello.txt',
@@ -178,7 +206,7 @@ describe('storage consistency recovery', () => {
 
     const response = await app.request('/api/files', {
       method: 'POST',
-      headers: { Cookie: `secret-key=${SECRET_KEY}` },
+      headers: { Authorization: `Bearer ${SECRET_KEY}` },
       body: form,
     }, bindings);
 
@@ -199,7 +227,7 @@ describe('storage consistency recovery', () => {
 
     const response = await app.request('/api/files', {
       method: 'POST',
-      headers: { Cookie: `secret-key=${SECRET_KEY}` },
+      headers: { Authorization: `Bearer ${SECRET_KEY}` },
       body: form,
     }, bindings);
 
@@ -211,7 +239,7 @@ describe('storage consistency recovery', () => {
     const { bindings, database, bucket } = createBindings({ secret: SECRET_KEY });
     const response = await app.request(`/api/files/${'a'.repeat(64)}`, {
       method: 'DELETE',
-      headers: { Cookie: `secret-key=${SECRET_KEY}` },
+      headers: { Authorization: `Bearer ${SECRET_KEY}` },
     }, bindings);
 
     expect(response.status).toBe(200);

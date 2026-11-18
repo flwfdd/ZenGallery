@@ -63,15 +63,12 @@ import {
   TransitionChild,
   TransitionRoot
 } from '@headlessui/vue';
-import { hc } from 'hono/client';
 import { AlertTriangle, Loader2, Trash2 } from '@lucide/vue';
 import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { AppType } from '../../api/index';
-import { responseError } from '../utils/http';
+import { apiClient as client, responseError } from '../utils/http';
 
 const { t } = useI18n();
-const client = hc<AppType>('/');
 
 const props = defineProps<{
   show: boolean;

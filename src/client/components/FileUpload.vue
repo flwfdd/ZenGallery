@@ -159,18 +159,15 @@
 </template>
 
 <script setup lang="ts">
-import { hc } from 'hono/client';
 import { createSHA256 } from 'hash-wasm';
 import { Check, CheckCircle, File, LoaderCircle, Upload, X, XCircle } from '@lucide/vue';
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { AppType } from '../../api/index';
 import { MAX_SINGLE_UPLOAD_SIZE, MAX_UPLOAD_SIZE, MULTIPART_CHUNK_SIZE } from '../../common/files';
 import { formatFileSize } from '../../common/format';
-import { responseError, xhrErrorMessage } from '../utils/http';
+import { apiClient as client, authorizationHeader, responseError, xhrErrorMessage } from '../utils/http';
 
 const { t } = useI18n();
-const client = hc<AppType>('/');
 
 const emit = defineEmits<{
   uploadComplete: [];
@@ -461,6 +458,8 @@ const uploadFileSingle = (file: File, index: number, hash: string): Promise<Uplo
     });
 
     xhr.open('POST', '/api/files');
+    const authorization = authorizationHeader();
+    if (authorization) xhr.setRequestHeader('Authorization', authorization);
     xhr.send(formData);
   });
 };

@@ -102,7 +102,7 @@ pnpm preview
 - `/share/*` 是公开图片详情页，复用文件哈希和元数据，无需创建分享记录。
 - `/files/*` 与 `/r2/*` 是公开文件链接，不携带管理密钥也可以访问。
 - 未配置 `SECRET_KEY` 时管理接口会返回 `503`，不会退化为匿名管理模式。
-- 登录成功后服务端设置 `HttpOnly`、`SameSite=Strict` Cookie；前端不会保存或读取管理密钥。
+- 管理接口统一使用 `Authorization: Bearer <SECRET_KEY>`，包括登录接口；前端只在内存中保存密钥，不写入 localStorage。
 
 线上密钥使用 `wrangler secret put SECRET_KEY` 设置，本地密钥放在不会提交到 Git 的 `.dev.vars` 中。
 

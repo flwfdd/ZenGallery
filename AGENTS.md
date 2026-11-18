@@ -38,6 +38,7 @@ feat(<scope>): <中文描述>
 ## 文档索引
 
 - `docs/architecture.md`：代码结构、上传去重、权限和图片转换约定。
+- `docs/api.md`：Bearer 认证、接口参数和 curl 调用示例。
 - `docs/development.md`：工具链、本地开发、测试和验证要求。
 - `docs/deployment.md`：Cloudflare Builds、运行时密钥、迁移和发布规则。
 - `docs/status.md`：当前线上状态、已验证范围和下一步。

@@ -281,7 +281,6 @@ import {
   ListboxOption,
   ListboxOptions
 } from '@headlessui/vue';
-import { hc } from 'hono/client';
 import {
   Check,
   ChevronsUpDown,
@@ -296,15 +295,13 @@ import {
 } from '@lucide/vue';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { AppType } from '../../api/index';
 import type { FileMetadata, ListFilesOptions } from '../../common/services';
 import { formatDate, formatFileSize } from '../../common/format';
-import { responseError } from '../utils/http';
+import { apiClient as client, responseError, setSecretKey } from '../utils/http';
 import FileIcon from './FileIcon.vue';
 import SecretKeyModal from './SecretKeyModal.vue';
 
 const { t } = useI18n();
-const client = hc<AppType>('/');
 
 defineEmits<{
   openDetails: [file: FileMetadata];
@@ -416,13 +413,15 @@ const loadFiles = async () => {
 // 处理密钥确认
 const handleSecretKeyConfirm = async (secretKey: string) => {
   try {
-    const response = await client.api.auth.login.$post({ json: { secret_key: secretKey } });
+    setSecretKey(secretKey);
+    const response = await client.api.auth.login.$post();
     if (response.ok) {
       showSecretKeyModal.value = false;
       await loadFiles();
       return;
     }
 
+    setSecretKey('');
     secretKeyModalRef.value?.showError(
       response.status === 503 ? t('auth.notConfigured') : t('auth.invalidSecretKey'),
     );

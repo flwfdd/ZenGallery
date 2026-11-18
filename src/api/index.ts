@@ -2,7 +2,6 @@ import type { D1Database, R2Bucket } from '@cloudflare/workers-types';
 import { zValidator } from '@hono/zod-validator';
 import type { Context, MiddlewareHandler } from 'hono';
 import { Hono } from 'hono';
-import { getCookie, setCookie } from 'hono/cookie';
 import { validator } from 'hono/validator';
 import { z } from 'zod';
 
@@ -10,6 +9,7 @@ import { FILE_HASH_PATTERN, FILE_KEY_PATTERN, getFileKey, MAX_SINGLE_UPLOAD_SIZE
 import type { DatabaseService, FileMetadata, ImageCompressionLevel, StorageObjectMetadata, StorageService } from '../common/services';
 import { ImageCompressionLevelSchema, ListFilesOptionsSchema } from '../common/services';
 import { isHashMismatchError, storedObjectMatchesHash } from './hash';
+import { LLMS_TXT } from './llms';
 import { parseRangeHeader } from './range';
 import { CloudflareD1Service, CloudflareImageService, CloudflareR2Service } from './services/cloudflare';
 import { renderSharePage } from './share';
@@ -21,8 +21,6 @@ export interface Bindings {
   SECRET_KEY?: string;
 }
 
-const SESSION_COOKIE = 'secret-key';
-const SESSION_MAX_AGE = 30 * 24 * 60 * 60;
 const IMMUTABLE_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 
 const htmlShell = (clientScriptPath: string, stylePath: string, faviconPath: string) => `
@@ -62,8 +60,10 @@ const authMiddleware: MiddlewareHandler<{ Bindings: Bindings }> = async (c, next
     return c.json({ error: 'SECRET_KEY is not configured' }, 503);
   }
 
-  const providedKey = getCookie(c, SESSION_COOKIE);
+  const authorization = c.req.header('Authorization') ?? '';
+  const providedKey = /^Bearer\s+(.+)$/i.exec(authorization)?.[1];
   if (!providedKey || !(await secretsMatch(providedKey, secretKey))) {
+    c.header('WWW-Authenticate', 'Bearer realm="ZenGallery"');
     return c.json({ error: 'Unauthorized' }, 401);
   }
 
@@ -75,10 +75,6 @@ const fileKeySchema = z.string().regex(FILE_KEY_PATTERN, 'Invalid file key');
 const filenameSchema = z.string().trim().min(1).max(512);
 const mimeTypeSchema = z.string().trim().min(1).max(255).default('application/octet-stream');
 const fileSizeSchema = z.number().int().positive().max(MAX_UPLOAD_SIZE);
-
-const authSchema = z.object({
-  secret_key: z.string().min(1).max(4096),
-});
 
 const fileUploadFormSchema = z.object({
   file: z.instanceof(File, { message: 'File is required' })
@@ -187,35 +183,9 @@ const resolveExistingFile = async ({
 const app = new Hono<{ Bindings: Bindings }>();
 
 export const route = app
+  .get('/llms.txt', (c) => c.text(LLMS_TXT))
   .get('/', (c) => c.html(htmlShell('/static/client.js', '/static/assets/style.css', '/favicon.ico')))
-  .post(
-    '/api/auth/login',
-    zValidator('json', authSchema, (result, c) => {
-      if (!result.success) {
-        return c.json({ error: 'Invalid credentials' }, 400);
-      }
-    }),
-    async (c) => {
-      const secretKey = c.env.SECRET_KEY;
-      if (!secretKey) {
-        return c.json({ error: 'SECRET_KEY is not configured' }, 503);
-      }
-
-      const { secret_key: providedKey } = c.req.valid('json');
-      if (!(await secretsMatch(providedKey, secretKey))) {
-        return c.json({ error: 'Unauthorized' }, 401);
-      }
-
-      setCookie(c, SESSION_COOKIE, providedKey, {
-        httpOnly: true,
-        secure: new URL(c.req.url).protocol === 'https:',
-        sameSite: 'Strict',
-        maxAge: SESSION_MAX_AGE,
-        path: '/',
-      });
-      return c.json({ authenticated: true });
-    },
-  )
+  .post('/api/auth/login', authMiddleware, async (c) => c.json({ authenticated: true }))
   .get(
     '/api/files',
     authMiddleware,
@@ -546,6 +516,19 @@ export const route = app
     } catch (error) {
       console.error(`Error processing file ${filename}:`, error);
       return c.json({ error: 'Failed to process file' }, 500);
+    }
+  })
+  .get('/api/files/:filename', authMiddleware, async (c) => {
+    const db = new CloudflareD1Service(c.env.DB);
+    try {
+      const fileRecord = await db.getFile(c.req.param('filename'));
+      if (!fileRecord) {
+        return c.json({ error: 'File not found' }, 404);
+      }
+      return c.json(fileRecord);
+    } catch (error) {
+      console.error('Error getting file:', error);
+      return c.json({ error: 'Failed to get file' }, 500);
     }
   })
   .put(
