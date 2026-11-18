@@ -15,6 +15,11 @@
 
         <!-- 主题和语言切换 -->
         <div class="flex items-center gap-2 sm:gap-4 w-full sm:w-auto justify-between sm:justify-end">
+          <a href="/llms.txt" aria-label="Agent API 使用指南"
+            class="h-10 px-3 bg-slate-50 dark:bg-slate-700 border-2 border-slate-200 dark:border-slate-600 rounded-lg shadow-[2px_2px_0px_0px_rgba(148,163,184,0.2)] transition-all duration-150 flex items-center justify-center hover:scale-105 active:scale-95 cursor-pointer text-slate-600 dark:text-slate-300 hover:bg-cyan-100 dark:hover:bg-cyan-600 hover:text-slate-700 dark:hover:text-slate-300 text-sm font-semibold">
+            Agent
+          </a>
+
           <!-- Github -->
           <a href="https://github.com/flwfdd/ZenGallery" target="_blank" rel="noopener noreferrer" aria-label="GitHub"
             class="w-10 h-10 bg-slate-50 dark:bg-slate-700 border-2 border-slate-200 dark:border-slate-600 rounded-lg shadow-[2px_2px_0px_0px_rgba(148,163,184,0.2)] transition-all duration-150 flex items-center justify-center hover:scale-110 active:scale-95 cursor-pointer text-slate-500 dark:text-slate-400 hover:bg-cyan-100 dark:hover:bg-cyan-600 hover:text-slate-700 dark:hover:text-slate-300">

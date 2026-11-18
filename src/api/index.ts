@@ -32,6 +32,7 @@ const htmlShell = (clientScriptPath: string, stylePath: string, faviconPath: str
       <title>ZenGallery</title>
       <link href="${stylePath}" rel="stylesheet">
       <link href="${faviconPath}" rel="icon">
+      <link rel="describedby" href="/llms.txt">
     </head>
     <body>
       <div id="app"></div>

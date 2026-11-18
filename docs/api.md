@@ -53,7 +53,7 @@ curl $ZENGALLERY_BASE_URL/api/files/<filename> \
   -H "Authorization: Bearer $ZENGALLERY_SECRET_KEY"
 ```
 
-列表参数包括 `limit`、`offset`、`sort_by=uploaded_at|size`、`sort=asc|desc`、`mime_type` 和 `search`。
+列表参数包括 `limit`、`offset`、`sort_by=uploaded_at|size`、`sort=asc|desc`、`mime_type` 和 `search`。默认 `limit=20`（最大 100）、`offset=0`、`sort_by=uploaded_at`、`sort=desc`。
 
 ### 上传前去重
 

@@ -27,6 +27,7 @@ export const renderSharePage = (file: FileMetadata, origin: string): string => {
     <meta name="description" content="${escapeHtml(description)}">
     <link rel="canonical" href="${escapeHtml(shareUrl)}">
     <link rel="icon" href="/favicon.ico">
+    <link rel="describedby" href="/llms.txt">
     <link rel="stylesheet" href="/static/assets/style.css">
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="ZenGallery">

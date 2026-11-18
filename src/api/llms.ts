@@ -40,6 +40,52 @@ Authorization: Bearer <SECRET_KEY>
 - \`POST /api/files/multipart/complete\`：合并分片。
 - \`DELETE /api/files/multipart/abort\`：放弃分片上传。
 
+## Parameters
+
+通用文件字段：
+
+- \`filename\`：字符串，原始文件名，1–512 字符。
+- \`hash\`：64 位 SHA-256 十六进制字符串。
+- \`mime_type\`：字符串，例如 \`image/jpeg\`；省略时为 \`application/octet-stream\`。
+- \`size\`：正整数，单位为字节，单文件最大 10 GiB。
+- 元数据包含 \`filename\`、\`title\`、\`description\`、\`mime_type\`、\`size\`、\`uploaded_at\`（ISO 8601 时间）。
+
+文件列表默认 \`limit=20\`（最大 100）、\`offset=0\`、\`sort_by=uploaded_at\`、\`sort=desc\`。
+
+预检和分片创建使用相同 JSON：
+
+\`\`\`json
+{
+  "filename": "example.jpg",
+  "hash": "<64 位 SHA-256>",
+  "mime_type": "image/jpeg",
+  "size": 123456
+}
+\`\`\`
+
+预检响应中 \`exists=true\` 表示可以直接复用 \`url\` 和 \`metadata\`。
+
+上传单个分片时，请求路径为 \`/api/files/multipart/upload?upload_id=<id>&key=<key>&part_number=1\`：
+
+- \`upload_id\` 和 \`key\` 来自 create 响应。
+- \`part_number\` 是从 1 开始的整数，每片最大 25 MiB。
+- 请求正文是该分片的原始字节，成功响应包含 \`partNumber\` 和 \`etag\`。
+
+完成分片上传时，\`parts\` 的每个元素都是 \`{"partNumber":1,"etag":"<对应分片返回的 etag>"}\`，完整 JSON 为：
+
+\`\`\`json
+{
+  "filename": "example.jpg",
+  "hash": "<64 位 SHA-256>",
+  "upload_id": "<create 返回的 upload_id>",
+  "parts": [{"partNumber": 1, "etag": "<etag>"}],
+  "mime_type": "image/jpeg",
+  "size": 123456
+}
+\`\`\`
+
+放弃分片上传使用 \`/api/files/multipart/abort?upload_id=<id>&key=<key>\`，参数同样来自 create 响应。
+
 ## Upload workflow
 
 1. 计算文件 SHA-256。

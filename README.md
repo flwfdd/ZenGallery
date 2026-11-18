@@ -103,6 +103,7 @@ pnpm preview
 - `/files/*` 与 `/r2/*` 是公开文件链接，不携带管理密钥也可以访问。
 - 未配置 `SECRET_KEY` 时管理接口会返回 `503`，不会退化为匿名管理模式。
 - 管理接口统一使用 `Authorization: Bearer <SECRET_KEY>`，包括登录接口；前端只在内存中保存密钥，不写入 localStorage。
+- Agent 使用指南位于 `/llms.txt`，首页和分享页通过 `rel="describedby"` 暴露入口。
 
 线上密钥使用 `wrangler secret put SECRET_KEY` 设置，本地密钥放在不会提交到 Git 的 `.dev.vars` 中。
 

@@ -91,6 +91,13 @@ describe('agent guide', () => {
     expect(response.status).toBe(200);
     expect(await response.text()).toContain('Base URL: `http://localhost`');
   });
+
+  it('exposes the agent guide from the home page', async () => {
+    const { bindings } = createBindings();
+    const response = await app.request('/', {}, bindings);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain('rel="describedby" href="/llms.txt"');
+  });
 });
 
 describe('management authentication', () => {
