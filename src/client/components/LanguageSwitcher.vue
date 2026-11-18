@@ -2,7 +2,7 @@
   <Menu as="div" class="relative" v-slot="{ open }">
     <!-- 当前语言显示按钮 -->
     <MenuButton
-      class="flex items-center gap-2 bg-slate-50 dark:bg-slate-700 border-2 border-slate-200 dark:border-slate-600 rounded-lg sm:rounded-xl px-2 sm:px-3 py-2 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-600 transition-all duration-150 hover:scale-105 active:scale-95 cursor-pointer shadow-[2px_2px_0px_0px_rgba(148,163,184,0.2)]">
+      class="flex items-center gap-2 min-h-10 bg-slate-50 dark:bg-slate-700 border-2 border-slate-200 dark:border-slate-600 rounded-lg sm:rounded-xl px-2 sm:px-3 py-2 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-600 transition-all duration-150 hover:scale-105 active:scale-95 cursor-pointer shadow-[2px_2px_0px_0px_rgba(148,163,184,0.2)]">
       <Globe class="w-4 h-4" />
       <span class="text-xs sm:text-sm font-medium hidden sm:inline">{{ currentLanguage.nativeName }}</span>
       <span class="text-xs font-medium sm:hidden">{{ currentLanguage.code.toUpperCase() }}</span>

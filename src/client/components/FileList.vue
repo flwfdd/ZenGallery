@@ -1,7 +1,7 @@
 <template>
   <section>
     <div
-      class="bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-600 rounded-2xl sm:rounded-3xl overflow-hidden transform hover:scale-[1.01] transition-all duration-200 shadow-[4px_4px_0px_0px_rgba(6,182,212,0.12)]">
+      class="bg-white dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-600 rounded-2xl sm:rounded-3xl overflow-hidden transition-colors duration-200 shadow-[4px_4px_0px_0px_rgba(6,182,212,0.12)]">
 
       <!-- 标题栏 -->
       <div class="border-b-2 border-slate-200 dark:border-slate-600 p-8">
@@ -16,7 +16,7 @@
           </div>
 
           <button @click="loadFiles" :disabled="isLoadingFiles"
-            class="bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 disabled:bg-slate-50 dark:disabled:bg-slate-800 text-slate-800 dark:text-slate-100 font-medium px-3 sm:px-4 py-2 rounded-xl border-2 border-slate-200 dark:border-slate-600 disabled:border-slate-100 dark:disabled:border-slate-800 transition-all duration-150 flex items-center gap-2 hover:scale-105 active:scale-95 cursor-pointer shadow-[2px_2px_0px_0px_rgba(148,163,184,0.1)] text-sm sm:text-base">
+            class="bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 disabled:bg-slate-50 dark:disabled:bg-slate-800 text-slate-800 dark:text-slate-100 font-medium px-3 sm:px-4 py-2 rounded-xl border-2 border-slate-200 dark:border-slate-600 disabled:border-slate-100 dark:disabled:border-slate-800 transition-colors duration-150 flex items-center gap-2 active:scale-95 cursor-pointer shadow-[2px_2px_0px_0px_rgba(148,163,184,0.1)] text-sm sm:text-base">
             <component :is="isLoadingFiles ? Loader2 : RotateCcw" :class="{ 'animate-spin': isLoadingFiles }"
               class="w-4 h-4" />
             {{ t('common.refresh') }}
