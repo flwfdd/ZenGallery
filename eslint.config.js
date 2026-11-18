@@ -6,7 +6,7 @@ import vueParser from 'vue-eslint-parser';
 
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'dist-server/**', 'node_modules/**', '.wrangler/**'],
+    ignores: ['dist/**', 'node_modules/**', '.wrangler/**'],
   },
   {
     ...js.configs.recommended,
