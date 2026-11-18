@@ -1,7 +1,7 @@
-import type { D1Database } from '@cloudflare/workers-types';
+import type { D1Database, R2Bucket, R2PutOptions } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 
-import { CloudflareD1Service } from './cloudflare';
+import { CloudflareD1Service, CloudflareR2Service } from './cloudflare';
 
 describe('CloudflareD1Service filters', () => {
   it('binds multiple MIME prefixes and searches filenames', async () => {
@@ -43,5 +43,23 @@ describe('CloudflareD1Service filters', () => {
       '%archive%',
       20,
     ]);
+  });
+});
+
+describe('CloudflareR2Service writes', () => {
+  it('passes the expected SHA-256 checksum to R2', async () => {
+    let options: R2PutOptions | undefined;
+    const bucket = {
+      async put(_key: string, _data: unknown, writeOptions: R2PutOptions) {
+        options = writeOptions;
+        return { etag: 'etag' };
+      },
+    } as unknown as R2Bucket;
+    const service = new CloudflareR2Service(bucket, 'files');
+    const sha256 = 'a'.repeat(64);
+
+    await service.put('key', new ArrayBuffer(1), { sha256 });
+
+    expect(options?.sha256).toBe(sha256);
   });
 });

@@ -13,6 +13,7 @@ export interface StorageObjectMetadata {
     contentType?: string;
     contentLength: number;
     etag?: string;
+    sha256?: string;
     customMetadata?: Record<string, string>;
 }
 
@@ -24,6 +25,7 @@ export interface StorageObject {
 export interface StorageWriteMetadata {
     contentType?: string;
     customMetadata?: Record<string, string>;
+    sha256?: string;
 }
 
 export interface StorageRange {

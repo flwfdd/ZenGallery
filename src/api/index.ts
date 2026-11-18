@@ -7,8 +7,9 @@ import { validator } from 'hono/validator';
 import { z } from 'zod';
 
 import { FILE_HASH_PATTERN, FILE_KEY_PATTERN, getFileKey, MAX_SINGLE_UPLOAD_SIZE, MAX_UPLOAD_SIZE, MULTIPART_CHUNK_SIZE } from '../common/files';
-import type { FileMetadata, ImageCompressionLevel, StorageObjectMetadata, StorageService } from '../common/services';
+import type { DatabaseService, FileMetadata, ImageCompressionLevel, StorageObjectMetadata, StorageService } from '../common/services';
 import { ImageCompressionLevelSchema, ListFilesOptionsSchema } from '../common/services';
+import { isHashMismatchError, storedObjectMatchesHash } from './hash';
 import { parseRangeHeader } from './range';
 import { CloudflareD1Service, CloudflareImageService, CloudflareR2Service } from './services/cloudflare';
 
@@ -25,7 +26,7 @@ const IMMUTABLE_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 
 const htmlShell = (clientScriptPath: string, stylePath: string, faviconPath: string) => `
   <!doctype html>
-  <html>
+  <html lang="zh">
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -85,7 +86,7 @@ const fileUploadFormSchema = z.object({
   hash: fileHashSchema,
 });
 
-const multipartCreateSchema = z.object({
+const fileDescriptorSchema = z.object({
   filename: filenameSchema,
   hash: fileHashSchema,
   mime_type: mimeTypeSchema,
@@ -154,6 +155,34 @@ const metadataFromObject = (
   object.customMetadata?.uploadedAt,
 );
 
+interface ExistingFileOptions {
+  storage: StorageService;
+  db: DatabaseService;
+  key: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  hash: string;
+  storedObject: StorageObjectMetadata;
+  databaseRecord: FileMetadata | null;
+}
+
+const resolveExistingFile = async ({
+  storage, db, key, filename, mimeType, size, hash, storedObject, databaseRecord,
+}: ExistingFileOptions): Promise<{ metadata?: FileMetadata; error?: string }> => {
+  if (storedObject.contentLength !== size) {
+    return { error: 'Hash collision or invalid file hash' };
+  }
+  if (databaseRecord) return { metadata: databaseRecord };
+  if (!(await storedObjectMatchesHash(storage, key, storedObject, hash))) {
+    return { error: 'Stored object content does not match its SHA-256 key' };
+  }
+
+  const metadata = metadataFromObject(key, filename, mimeType, storedObject);
+  await db.saveFile(metadata);
+  return { metadata };
+};
+
 const app = new Hono<{ Bindings: Bindings }>();
 
 export const route = app
@@ -218,6 +247,41 @@ export const route = app
     },
   )
   .post(
+    '/api/files/check',
+    authMiddleware,
+    zValidator('json', fileDescriptorSchema, (result, c) => {
+      if (!result.success) {
+        return c.json({ error: 'Invalid JSON data', issues: result.error.issues }, 400);
+      }
+    }),
+    async (c) => {
+      const storage = new CloudflareR2Service(c.env.BUCKET, 'files');
+      const db = new CloudflareD1Service(c.env.DB);
+      try {
+        const { filename, hash, mime_type, size } = c.req.valid('json');
+        const key = getFileKey(filename, hash);
+        const [storedObject, databaseRecord] = await Promise.all([
+          storage.head(key),
+          db.getFile(key),
+        ]);
+
+        if (!storedObject) {
+          if (databaseRecord) await db.deleteFile(key);
+          return c.json({ exists: false });
+        }
+
+        const { metadata, error } = await resolveExistingFile({
+          storage, db, key, filename, mimeType: mime_type, size, hash, storedObject, databaseRecord,
+        });
+        if (error) return c.json({ error }, 409);
+        return c.json({ message: 'File already exists', exists: true, url: `/files/${key}`, metadata });
+      } catch (error) {
+        console.error('Check file error:', error);
+        return c.json({ error: 'Failed to check file' }, 500);
+      }
+    },
+  )
+  .post(
     '/api/files',
     authMiddleware,
     zValidator('form', fileUploadFormSchema, (result, c) => {
@@ -237,13 +301,10 @@ export const route = app
         ]);
 
         if (storedObject) {
-          if (storedObject.contentLength !== file.size) {
-            return c.json({ error: 'Hash collision or invalid file hash' }, 409);
-          }
-          const metadata = databaseRecord ?? metadataFromObject(key, file.name, file.type, storedObject);
-          if (!databaseRecord) {
-            await db.saveFile(metadata);
-          }
+          const { metadata, error } = await resolveExistingFile({
+            storage, db, key, filename: file.name, mimeType: file.type, size: file.size, hash, storedObject, databaseRecord,
+          });
+          if (error) return c.json({ error }, 409);
           return c.json({ message: 'File already exists', exists: true, url: `/files/${key}`, metadata });
         }
 
@@ -251,12 +312,16 @@ export const route = app
         await storage.put(key, file.stream(), {
           contentType: file.type || 'application/octet-stream',
           customMetadata: { uploadedAt },
+          sha256: hash,
         });
 
         const metadata = buildFileMetadata(key, file.name, file.type, file.size, uploadedAt);
         await db.saveFile(metadata);
         return c.json({ message: 'File uploaded successfully', exists: false, url: `/files/${key}`, metadata });
       } catch (error) {
+        if (isHashMismatchError(error)) {
+          return c.json({ error: 'Uploaded content does not match its SHA-256 hash' }, 409);
+        }
         console.error('Upload error:', error);
         return c.json({ error: 'Upload failed' }, 500);
       }
@@ -265,7 +330,7 @@ export const route = app
   .post(
     '/api/files/multipart/create',
     authMiddleware,
-    zValidator('json', multipartCreateSchema, (result, c) => {
+    zValidator('json', fileDescriptorSchema, (result, c) => {
       if (!result.success) {
         return c.json({ error: 'Invalid JSON data', issues: result.error.issues }, 400);
       }
@@ -282,13 +347,10 @@ export const route = app
         ]);
 
         if (storedObject) {
-          if (storedObject.contentLength !== size) {
-            return c.json({ error: 'Hash collision or invalid file hash' }, 409);
-          }
-          const metadata = databaseRecord ?? metadataFromObject(key, filename, mime_type, storedObject);
-          if (!databaseRecord) {
-            await db.saveFile(metadata);
-          }
+          const { metadata, error } = await resolveExistingFile({
+            storage, db, key, filename, mimeType: mime_type, size, hash, storedObject, databaseRecord,
+          });
+          if (error) return c.json({ error }, 409);
           return c.json({ message: 'File already exists', exists: true, url: `/files/${key}`, metadata });
         }
 
@@ -358,13 +420,10 @@ export const route = app
         ]);
 
         if (storedObject) {
-          if (storedObject.contentLength !== size) {
-            return c.json({ error: 'Completed object size does not match the upload' }, 409);
-          }
-          const metadata = databaseRecord ?? metadataFromObject(key, filename, mime_type, storedObject);
-          if (!databaseRecord) {
-            await db.saveFile(metadata);
-          }
+          const { metadata, error } = await resolveExistingFile({
+            storage, db, key, filename, mimeType: mime_type, size, hash, storedObject, databaseRecord,
+          });
+          if (error) return c.json({ error }, 409);
           return c.json({ message: 'File already exists', exists: true, url: `/files/${key}`, metadata });
         }
 
@@ -380,7 +439,11 @@ export const route = app
         }
         if (completedObject.contentLength !== size) {
           await storage.delete(key);
-          throw new Error('Completed object size does not match the upload');
+          return c.json({ error: 'Completed object size does not match the upload' }, 409);
+        }
+        if (!(await storedObjectMatchesHash(storage, key, completedObject, hash))) {
+          await storage.delete(key);
+          return c.json({ error: 'Completed object content does not match its SHA-256 hash' }, 409);
         }
 
         const metadata = metadataFromObject(key, filename, mime_type, completedObject);

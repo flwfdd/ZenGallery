@@ -40,6 +40,7 @@ export class CloudflareR2Service implements StorageService {
         const result = await this.bucket.put(this.getFullKey(key), data as Parameters<R2Bucket['put']>[1], {
             httpMetadata,
             customMetadata: metadata?.customMetadata,
+            sha256: metadata?.sha256,
         });
 
         return {
@@ -52,10 +53,8 @@ export class CloudflareR2Service implements StorageService {
         if (object === null) {
             return null;
         }
-        const body = object.body as (ReadableStream<Uint8Array> | ArrayBuffer | null);
-
         return {
-            body: body,
+            body: object.body as unknown as StorageObject['body'],
             metadata: {
                 contentType: object.httpMetadata?.contentType,
                 contentLength: object.size,
@@ -74,6 +73,7 @@ export class CloudflareR2Service implements StorageService {
             contentType: object.httpMetadata?.contentType,
             contentLength: object.size,
             etag: object.httpEtag,
+            sha256: object.checksums?.toJSON().sha256,
             customMetadata: object.customMetadata,
         };
     }

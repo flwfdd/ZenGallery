@@ -59,7 +59,7 @@
                 </p>
               </div>
             </div>
-            <button v-if="!isUploading" @click="removeFile(index)" :title="t('upload.remove')"
+            <button v-if="!isUploading" @click="removeFile(index)" :title="t('upload.remove')" :aria-label="`${t('upload.remove')}: ${file.name}`"
               class="w-8 h-8 bg-red-200 dark:bg-red-600/50 hover:bg-red-300 dark:hover:bg-red-500 text-red-700 dark:text-red-300 rounded-lg border-2 border-red-300 dark:border-red-500 transition-all duration-150 flex items-center justify-center hover:scale-110 active:scale-95 cursor-pointer flex-shrink-0 ml-2">
               <X class="w-4 h-4" />
             </button>
@@ -72,11 +72,9 @@
               <span class="font-semibold text-slate-700 dark:text-slate-300 ml-2">{{
                 Math.round(fileProgresses[index]) }}%</span>
             </div>
-            <div class="w-full bg-slate-200 dark:bg-slate-600 rounded-full h-2 overflow-hidden">
-              <div class="h-full rounded-full transition-all duration-300 ease-out" :class="getProgressBarClass(index)"
-                :style="{ width: `${fileProgresses[index]}%` }">
-              </div>
-            </div>
+            <progress :value="fileProgresses[index]" max="100" :data-status="fileStatuses[index]"
+              :aria-label="`${file.name}: ${getUploadStatusText(index)}`"
+              class="upload-progress block w-full h-2"></progress>
           </div>
         </div>
 
@@ -102,12 +100,8 @@
                   </div>
                 </div>
               </div>
-              <div class="w-full bg-slate-200 dark:bg-slate-600 rounded-full h-3 overflow-hidden">
-                <div
-                  class="h-full bg-gradient-to-r from-cyan-400 to-cyan-600 dark:from-cyan-500 dark:to-cyan-700 rounded-full transition-all duration-300 ease-out transform"
-                  :style="{ width: `${overallProgress}%` }">
-                </div>
-              </div>
+              <progress :value="overallProgress" max="100" :aria-label="t('upload.uploadProgress')"
+                class="upload-progress block w-full h-3"></progress>
             </div>
           </div>
         </div>
@@ -172,6 +166,8 @@ import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppType } from '../../api/index';
 import { MAX_SINGLE_UPLOAD_SIZE, MAX_UPLOAD_SIZE, MULTIPART_CHUNK_SIZE } from '../../common/files';
+import { formatFileSize } from '../utils/format';
+import { responseError, xhrErrorMessage } from '../utils/http';
 
 const { t } = useI18n();
 const client = hc<AppType>('/');
@@ -192,7 +188,6 @@ interface UploadResult {
   filename?: string;
 }
 
-type UploadSuccess = UploadResult;
 type UploadedPart = { partNumber: number; etag: string };
 type PartResult = UploadedPart | { error: Error };
 
@@ -203,29 +198,6 @@ class UploadHttpError extends Error {
 }
 
 const asError = (error: unknown): Error => error instanceof Error ? error : new Error(String(error));
-
-interface JsonErrorResponse {
-  clone(): { json(): Promise<unknown> };
-}
-
-const responseError = async (response: JsonErrorResponse, fallback: string): Promise<string> => {
-  try {
-    const data = await response.clone().json() as { error?: string };
-    return data.error || fallback;
-  } catch {
-    return fallback;
-  }
-};
-
-const xhrErrorMessage = (xhr: XMLHttpRequest, fallback: string): string => {
-  try {
-    const data = JSON.parse(xhr.responseText) as { error?: unknown };
-    if (typeof data.error === 'string') return data.error;
-  } catch {
-    // The fallback includes the status when the response is not JSON.
-  }
-  return fallback;
-};
 
 // 文件上传相关状态
 const fileInput = ref<HTMLInputElement>();
@@ -269,19 +241,6 @@ const getUploadStatusText = (index: number) => {
   }
 };
 
-// 获取进度条样式
-const getProgressBarClass = (index: number) => {
-  const status = fileStatuses.value[index];
-  switch (status) {
-    case 'hashing':
-    case 'uploading': return 'bg-gradient-to-r from-cyan-400 to-cyan-600 dark:from-cyan-500 dark:to-cyan-700';
-    case 'completed': return 'bg-gradient-to-r from-green-400 to-green-600 dark:from-green-500 dark:to-green-700';
-    case 'error': return 'bg-gradient-to-r from-red-400 to-red-600 dark:from-red-500 dark:to-red-700';
-    case 'duplicate': return 'bg-gradient-to-r from-orange-400 to-orange-600 dark:from-orange-500 dark:to-orange-700';
-    default: return 'bg-slate-400 dark:bg-slate-500';
-  }
-};
-
 // 文件选择处理
 const handleFileChange = (event: Event) => {
   const target = event.target as HTMLInputElement;
@@ -298,10 +257,10 @@ const handleFileChange = (event: Event) => {
 // 移除单个文件
 const removeFile = (index: number) => {
   selectedFiles.value.splice(index, 1);
-  // 清理对应的进度状态
-  delete fileProgresses.value[index];
-  delete fileStatuses.value[index];
-  // 如果没有文件了，也清理input
+  uploadResults.value = [];
+  fileProgresses.value = {};
+  fileStatuses.value = {};
+  completedFiles.value = 0;
   if (selectedFiles.value.length === 0 && fileInput.value) {
     fileInput.value.value = '';
   }
@@ -401,14 +360,37 @@ class ConcurrentUploadController {
   }
 }
 
-// 单个文件上传函数：分块计算 SHA-256 后按大小选择上传方式
-const uploadSingleFile = async (file: File, index: number): Promise<UploadSuccess> => {
+// 单个文件上传函数：计算 SHA-256 并预检，确认需要上传后按大小选择上传方式
+const uploadSingleFile = async (file: File, index: number): Promise<UploadResult> => {
   try {
     fileStatuses.value[index] = 'hashing';
     fileProgresses.value[index] = 0;
     const hash = await calculateFileHash(file, (progress) => {
       fileProgresses.value[index] = progress * 10;
     });
+
+    const checkResponse = await client.api.files.check.$post({
+      json: {
+        filename: file.name,
+        hash,
+        mime_type: file.type || 'application/octet-stream',
+        size: file.size,
+      },
+    });
+    if (!checkResponse.ok) {
+      throw new UploadHttpError(
+        await responseError(checkResponse, 'Failed to check file'),
+        checkResponse.status,
+      );
+    }
+
+    const checkData = await checkResponse.json();
+    if ('exists' in checkData && checkData.exists) {
+      fileProgresses.value[index] = 100;
+      fileStatuses.value[index] = 'duplicate';
+      completedFiles.value++;
+      return checkData;
+    }
 
     fileStatuses.value[index] = 'uploading';
     return file.size > MAX_SINGLE_UPLOAD_SIZE
@@ -421,7 +403,7 @@ const uploadSingleFile = async (file: File, index: number): Promise<UploadSucces
 };
 
 // 单次上传实现
-const uploadFileSingle = (file: File, index: number, hash: string): Promise<UploadSuccess> => {
+const uploadFileSingle = (file: File, index: number, hash: string): Promise<UploadResult> => {
   return new Promise((resolve, reject) => {
     const formData = new FormData();
     formData.append('file', file);
@@ -441,7 +423,7 @@ const uploadFileSingle = (file: File, index: number, hash: string): Promise<Uplo
     xhr.addEventListener('load', () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
-          const response = JSON.parse(xhr.responseText) as UploadSuccess;
+          const response = JSON.parse(xhr.responseText) as UploadResult;
           fileProgresses.value[index] = 100;
 
           // 检查是否是重复文件
@@ -536,7 +518,7 @@ const uploadPart = async (
 };
 
 // 分片上传函数
-const uploadFileMultipart = async (file: File, index: number, hash: string): Promise<UploadSuccess> => {
+const uploadFileMultipart = async (file: File, index: number, hash: string): Promise<UploadResult> => {
   let uploadId: string | undefined;
   let key: string | undefined;
   try {
@@ -643,7 +625,7 @@ const uploadFileMultipart = async (file: File, index: number, hash: string): Pro
       );
     }
 
-    const result = await completeResponse.json() as UploadSuccess;
+    const result = await completeResponse.json() as UploadResult;
 
     fileProgresses.value[index] = 100;
 
@@ -689,6 +671,8 @@ const uploadFiles = async () => {
 
   isUploading.value = true;
   uploadResults.value = [];
+  fileProgresses.value = {};
+  fileStatuses.value = {};
   completedFiles.value = 0;
 
   // 初始化所有文件状态
@@ -776,14 +760,6 @@ const calculateFileHash = async (file: File, onProgress: (progress: number) => v
   }
 
   return hasher.digest('hex');
-};
-
-const formatFileSize = (bytes: number): string => {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 };
 
 // 通用文件处理函数
