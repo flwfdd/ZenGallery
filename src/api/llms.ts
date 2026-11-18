@@ -1,8 +1,8 @@
-export const LLMS_TXT = `# ZenGallery
+export const renderLlmsTxt = (origin: string): string => `# ZenGallery
 
 > ZenGallery 是文件与图片 HTTP 服务，支持上传、去重、下载、元数据、图片压缩和公开分享。
 
-Base URL: \`https://gallery.0u0.fun\`
+Base URL: \`${origin}\`
 
 ## Authentication
 

@@ -84,6 +84,15 @@ const createBindings = (options: {
   return { bindings, database, bucket };
 };
 
+describe('agent guide', () => {
+  it('uses the request origin as the base URL', async () => {
+    const { bindings } = createBindings();
+    const response = await app.request('/llms.txt', {}, bindings);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain('Base URL: `http://localhost`');
+  });
+});
+
 describe('management authentication', () => {
   it('fails closed when SECRET_KEY is missing', async () => {
     const { bindings } = createBindings();

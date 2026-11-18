@@ -4,7 +4,7 @@
 
 ## 基础地址与认证
 
-线上基础地址：`https://gallery.0u0.fun`。
+基础地址通过环境变量 `ZENGALLERY_BASE_URL` 指定，例如生产环境可设为 `https://gallery.0u0.fun`，本地预览可设为 `http://localhost:8799`。
 
 管理接口统一使用：
 
@@ -39,17 +39,17 @@ Authorization: Bearer <SECRET_KEY>
 ### 验证密钥
 
 ```bash
-curl -X POST https://gallery.0u0.fun/api/auth/login \
+curl -X POST $ZENGALLERY_BASE_URL/api/auth/login \
   -H "Authorization: Bearer $ZENGALLERY_SECRET_KEY"
 ```
 
 ### 文件列表与单个元数据
 
 ```bash
-curl https://gallery.0u0.fun/api/files?limit=20&offset=0 \
+curl $ZENGALLERY_BASE_URL/api/files?limit=20&offset=0 \
   -H "Authorization: Bearer $ZENGALLERY_SECRET_KEY"
 
-curl https://gallery.0u0.fun/api/files/<filename> \
+curl $ZENGALLERY_BASE_URL/api/files/<filename> \
   -H "Authorization: Bearer $ZENGALLERY_SECRET_KEY"
 ```
 
@@ -69,7 +69,7 @@ curl https://gallery.0u0.fun/api/files/<filename> \
 ```
 
 ```bash
-curl -X POST https://gallery.0u0.fun/api/files/check \
+curl -X POST $ZENGALLERY_BASE_URL/api/files/check \
   -H "Authorization: Bearer $ZENGALLERY_SECRET_KEY" \
   -H "Content-Type: application/json" \
   -d '{"filename":"example.jpg","hash":"<64 位 SHA-256>","mime_type":"image/jpeg","size":123456}'
@@ -80,7 +80,7 @@ curl -X POST https://gallery.0u0.fun/api/files/check \
 ### 单文件上传
 
 ```bash
-curl -X POST https://gallery.0u0.fun/api/files \
+curl -X POST $ZENGALLERY_BASE_URL/api/files \
   -H "Authorization: Bearer $ZENGALLERY_SECRET_KEY" \
   -F "file=@example.jpg" \
   -F "hash=<64 位 SHA-256>"
@@ -110,12 +110,12 @@ curl -X POST https://gallery.0u0.fun/api/files \
 ### 编辑、删除和分享
 
 ```bash
-curl -X PUT https://gallery.0u0.fun/api/files/<filename> \
+curl -X PUT $ZENGALLERY_BASE_URL/api/files/<filename> \
   -H "Authorization: Bearer $ZENGALLERY_SECRET_KEY" \
   -H "Content-Type: application/json" \
   -d '{"title":"新标题","description":"新描述"}'
 
-curl -X DELETE https://gallery.0u0.fun/api/files/<filename> \
+curl -X DELETE $ZENGALLERY_BASE_URL/api/files/<filename> \
   -H "Authorization: Bearer $ZENGALLERY_SECRET_KEY"
 ```
 

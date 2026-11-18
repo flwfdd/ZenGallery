@@ -9,7 +9,7 @@ import { FILE_HASH_PATTERN, FILE_KEY_PATTERN, getFileKey, MAX_SINGLE_UPLOAD_SIZE
 import type { DatabaseService, FileMetadata, ImageCompressionLevel, StorageObjectMetadata, StorageService } from '../common/services';
 import { ImageCompressionLevelSchema, ListFilesOptionsSchema } from '../common/services';
 import { isHashMismatchError, storedObjectMatchesHash } from './hash';
-import { LLMS_TXT } from './llms';
+import { renderLlmsTxt } from './llms';
 import { parseRangeHeader } from './range';
 import { CloudflareD1Service, CloudflareImageService, CloudflareR2Service } from './services/cloudflare';
 import { renderSharePage } from './share';
@@ -183,7 +183,7 @@ const resolveExistingFile = async ({
 const app = new Hono<{ Bindings: Bindings }>();
 
 export const route = app
-  .get('/llms.txt', (c) => c.text(LLMS_TXT))
+  .get('/llms.txt', (c) => c.text(renderLlmsTxt(new URL(c.req.url).origin)))
   .get('/', (c) => c.html(htmlShell('/static/client.js', '/static/assets/style.css', '/favicon.ico')))
   .post('/api/auth/login', authMiddleware, async (c) => c.json({ authenticated: true }))
   .get(
