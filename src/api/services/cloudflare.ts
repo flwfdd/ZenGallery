@@ -236,7 +236,7 @@ export class CloudflareImageService implements ImageProcessingService {
                         fit: 'scale-down',
                     },
                     output: {
-                        format: 'image/jpeg',
+                        format: 'image/webp',
                         quality: 24,
                     },
                 };
@@ -248,7 +248,7 @@ export class CloudflareImageService implements ImageProcessingService {
                         fit: 'scale-down',
                     },
                     output: {
-                        format: 'image/jpeg',
+                        format: 'image/webp',
                         quality: 42,
                     },
                 };
@@ -260,7 +260,7 @@ export class CloudflareImageService implements ImageProcessingService {
                         fit: 'scale-down',
                     },
                     output: {
-                        format: 'image/jpeg',
+                        format: 'image/webp',
                         quality: 84,
                     },
                 };

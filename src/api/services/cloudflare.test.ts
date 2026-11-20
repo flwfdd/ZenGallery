@@ -1,7 +1,7 @@
 import type { D1Database, R2Bucket, R2PutOptions } from '@cloudflare/workers-types';
 import { describe, expect, it } from 'vitest';
 
-import { CloudflareD1Service, CloudflareR2Service } from './cloudflare';
+import { CloudflareD1Service, CloudflareImageService, CloudflareR2Service } from './cloudflare';
 
 describe('CloudflareD1Service filters', () => {
   it('binds multiple MIME prefixes and searches filenames', async () => {
@@ -61,5 +61,32 @@ describe('CloudflareR2Service writes', () => {
     await service.put('key', new ArrayBuffer(1), { sha256 });
 
     expect(options?.sha256).toBe(sha256);
+  });
+});
+
+describe('CloudflareImageService', () => {
+  it('outputs WebP at every compression level', async () => {
+    const formats: string[] = [];
+    const binding = {
+      input: () => ({
+        transform: () => ({
+          output: (options: ImageOutputOptions) => {
+            formats.push(options.format);
+            return {
+              response: () => new Response(new Uint8Array([1]), {
+                headers: { 'Content-Type': 'image/webp' },
+              }),
+            };
+          },
+        }),
+      }),
+    } as unknown as ImagesBinding;
+    const service = new CloudflareImageService(binding);
+
+    for (const level of ['low', 'mid', 'high'] as const) {
+      await service.compress(new ArrayBuffer(1), level);
+    }
+
+    expect(formats).toEqual(['image/webp', 'image/webp', 'image/webp']);
   });
 });

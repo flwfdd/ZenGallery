@@ -39,7 +39,7 @@
 - 管理接口统一使用 `Authorization: Bearer <SECRET_KEY>`，`POST /api/auth/login` 也用同一请求头验证密钥，不设置 Cookie。
 - `SECRET_KEY` 未配置时管理接口返回 `503`；配置后，匿名或错误凭据返回 `401`。
 - `/files/*` 和 `/r2/*` 是公开链接，不需要管理密钥。
-- 单文件图片首次访问 `?level=low|mid|high` 时才生成 JPEG 并写入 R2 缓存，后续请求复用缓存。
+- 单文件图片首次访问 `?level=low|mid|high` 时才生成 WebP 并写入 R2 缓存，后续请求复用缓存。
 
 ## 图片分享
 
