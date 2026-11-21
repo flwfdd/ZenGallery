@@ -5,7 +5,7 @@ import { Hono } from 'hono';
 import { validator } from 'hono/validator';
 import { z } from 'zod';
 
-import { FILE_HASH_PATTERN, FILE_KEY_PATTERN, getFileKey, MAX_SINGLE_UPLOAD_SIZE, MAX_UPLOAD_SIZE, MULTIPART_CHUNK_SIZE } from '../common/files';
+import { FILE_HASH_PATTERN, FILE_KEY_PATTERN, getFileKey, getImageVariantKey, MAX_IMAGE_TRANSFORM_SIZE, MAX_SINGLE_UPLOAD_SIZE, MAX_UPLOAD_SIZE, MULTIPART_CHUNK_SIZE } from '../common/files';
 import type { DatabaseService, FileMetadata, ImageCompressionLevel, StorageObjectMetadata, StorageService } from '../common/services';
 import { ImageCompressionLevelSchema, ListFilesOptionsSchema } from '../common/services';
 import { isHashMismatchError, storedObjectMatchesHash } from './hash';
@@ -478,7 +478,7 @@ export const route = app
         return c.json({ error: 'File not found' }, 404);
       }
 
-      if (!fileRecord.mime_type.startsWith('image/') || !level || fileRecord.size > 10 * 1024 * 1024) {
+      if (!fileRecord.mime_type.startsWith('image/') || !level || fileRecord.size > MAX_IMAGE_TRANSFORM_SIZE) {
         return c.redirect(`/r2/files/${filename}`, 302);
       }
 
@@ -488,16 +488,17 @@ export const route = app
       }
 
       const validLevel = parsedLevel.data;
+      const variantFilename = getImageVariantKey(filename);
       const cacheStorage = new CloudflareR2Service(c.env.BUCKET, `cache/${validLevel}`);
-      if (await cacheStorage.head(filename)) {
-        return c.redirect(`/r2/cache/${validLevel}/${filename}`, 302);
+      if (await cacheStorage.head(variantFilename)) {
+        return c.redirect(`/r2/cache/${validLevel}/${variantFilename}`, 302);
       }
 
       const originalObject = await originalStorage.get(filename);
       if (!originalObject?.body) {
         return c.json({ error: 'Original file not found' }, 404);
       }
-      if (originalObject.metadata.contentLength > 10 * 1024 * 1024) {
+      if (originalObject.metadata.contentLength > MAX_IMAGE_TRANSFORM_SIZE) {
         return c.redirect(`/r2/files/${filename}`, 302);
       }
 
@@ -508,8 +509,8 @@ export const route = app
         if (!compressed) {
           throw new Error('Image compression failed');
         }
-        await cacheStorage.put(filename, compressed.data, { contentType: compressed.mimeType });
-        return c.redirect(`/r2/cache/${validLevel}/${filename}`, 302);
+        await cacheStorage.put(variantFilename, compressed.data, { contentType: compressed.mimeType });
+        return c.redirect(`/r2/cache/${validLevel}/${variantFilename}`, 302);
       } catch (error) {
         console.error(`Failed to compress ${filename}:`, error);
         return c.redirect(`/r2/files/${filename}`, 302);
@@ -569,8 +570,9 @@ export const route = app
     const originalStorage = new CloudflareR2Service(c.env.BUCKET, 'files');
 
     try {
+      const variantFilename = getImageVariantKey(filename);
       const cacheDeletions = ImageCompressionLevelSchema.options.map((level) => (
-        new CloudflareR2Service(c.env.BUCKET, `cache/${level}`).delete(filename)
+        new CloudflareR2Service(c.env.BUCKET, `cache/${level}`).delete(variantFilename)
       ));
       await Promise.all([originalStorage.delete(filename), ...cacheDeletions]);
       await db.deleteFile(filename);

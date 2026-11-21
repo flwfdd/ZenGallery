@@ -24,7 +24,7 @@ Authorization: Bearer <SECRET_KEY>
 - 压缩图片：\`GET /files/{filename}?level=low\`、\`mid\` 或 \`high\`
 - 图片分享页：\`GET /share/{filename}\`
 
-分享链接直接按上述路径构造，无需创建分享记录。修改标题或描述不会改变链接；删除文件后链接失效。
+不超过 20 MB 的图片按需生成 \`.webp\` 派生文件；超过 20 MB 时返回原始文件。分享链接直接按上述路径构造，无需创建分享记录。修改标题或描述不会改变链接；删除文件后链接失效。
 
 ## Management endpoints
 

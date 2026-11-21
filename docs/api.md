@@ -119,7 +119,7 @@ curl -X DELETE $ZENGALLERY_BASE_URL/api/files/<filename> \
   -H "Authorization: Bearer $ZENGALLERY_SECRET_KEY"
 ```
 
-图片分享页按 `/share/<filename>` 构造，无需创建分享记录。原图为 `/files/<filename>`，压缩版本为 `/files/<filename>?level=low|mid|high`。
+图片分享页按 `/share/<filename>` 构造，无需创建分享记录。原图为 `/files/<filename>`，压缩版本为 `/files/<filename>?level=low|mid|high`。不超过 20 MB 的图片会跳转到 `.webp` 派生文件；超过 20 MB 时返回原始文件。
 
 ## 错误
 

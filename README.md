@@ -101,6 +101,7 @@ pnpm preview
 - `/api/files` 及上传、分片上传、编辑、删除接口需要通过 `SECRET_KEY` 登录。
 - `/share/*` 是公开图片详情页，复用文件哈希和元数据，无需创建分享记录。
 - `/files/*` 与 `/r2/*` 是公开文件链接，不携带管理密钥也可以访问。
+- 不超过 20 MB 的图片按需生成 `.webp` 派生文件；超过 20 MB 时返回原始文件。
 - 未配置 `SECRET_KEY` 时管理接口会返回 `503`，不会退化为匿名管理模式。
 - 管理接口统一使用 `Authorization: Bearer <SECRET_KEY>`，包括登录接口；前端只在内存中保存密钥，不写入 localStorage。
 - Agent 使用指南位于 `/llms.txt`，首页和分享页通过 `rel="describedby"` 暴露入口。

@@ -130,6 +130,21 @@ describe('management authentication', () => {
   });
 });
 
+describe('image transformations', () => {
+  it('returns the original file when it exceeds the transformation limit', async () => {
+    const largeImage: FileMetadata = {
+      ...databaseFile,
+      filename: `${'c'.repeat(64)}.jpeg`,
+      mime_type: 'image/jpeg',
+      size: 20_000_001,
+    };
+    const { bindings } = createBindings({ databaseRecord: largeImage });
+    const response = await app.request(`/files/${largeImage.filename}?level=high`, {}, bindings);
+    expect(response.status).toBe(302);
+    expect(response.headers.get('Location')).toBe(`/r2/files/${largeImage.filename}`);
+  });
+});
+
 describe('share pages', () => {
   it('renders an image without requiring authentication', async () => {
     const imageFile: FileMetadata = {
@@ -260,6 +275,9 @@ describe('storage consistency recovery', () => {
 
     expect(response.status).toBe(200);
     expect(bucket.deleteMock).toHaveBeenCalledTimes(4);
+    for (const level of ['low', 'mid', 'high']) {
+      expect(bucket.deleteMock).toHaveBeenCalledWith(`cache/${level}/${'a'.repeat(64)}.webp`);
+    }
     expect(database.queries.some((query) => query.includes('DELETE FROM files'))).toBe(true);
   });
 });
